@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useApp } from '../store/AppContext.jsx'
 import { getDayType, getHolidayName } from '../utils/chineseHolidays.js'
 import { shouldShowOnDate } from '../utils/helpers.js'
+import { getLunarDate, formatLunar } from '../utils/lunarCalendar.js'
 
 const PRIORITY_DOT = {
   P1: 'bg-red-500',
@@ -199,16 +200,30 @@ export default function CalendarView() {
                     )}
                   </div>
 
-                  {/* 日期圆圈 */}
-                  <span
-                    className={`text-xs font-medium w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full ${
-                      isToday
-                        ? 'bg-orange-600 text-white font-bold'
-                        : numColor
-                    }`}
-                  >
-                    {cell.day}
-                  </span>
+                  {/* 日期圆圈 + 农历 */}
+                  <div className="flex flex-col items-center flex-shrink-0">
+                    <span
+                      className={`text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full ${
+                        isToday
+                          ? 'bg-orange-600 text-white font-bold'
+                          : numColor
+                      }`}
+                    >
+                      {cell.day}
+                    </span>
+                    {!cell.outside && (() => {
+                      const lunar = getLunarDate(cell.dateStr)
+                      const lunarText = formatLunar(lunar)
+                      const isMonthStart = lunar?.day === 1
+                      return lunarText ? (
+                        <span className={`text-[9px] leading-tight mt-0.5 ${
+                          isMonthStart ? 'text-orange-400 font-medium' : 'text-stone-600'
+                        }`}>
+                          {lunarText}
+                        </span>
+                      ) : null
+                    })()}
+                  </div>
                 </div>
 
                 {/* 任务条 */}

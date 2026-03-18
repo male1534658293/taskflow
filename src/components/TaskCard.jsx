@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
-import { MessageCircle, RefreshCw, Play, Pause, Check } from 'lucide-react'
+import { MessageCircle, RefreshCw, Play, Pause, Check, CalendarX } from 'lucide-react'
 import { useApp } from '../store/AppContext.jsx'
+import { isGoogleConnected } from '../utils/googleCalendar.js'
 import {
   priorityDot,
   priorityBg,
@@ -139,6 +140,18 @@ export default function TaskCard({ task, compact = false, showFocusCheckbox = fa
                 <MessageCircle size={11} />
                 {commentCount}
               </span>
+            )}
+
+            {/* Google Calendar unsync marker */}
+            {isGoogleConnected() && !task.gcalEventId && (
+              <button
+                onClick={e => { e.stopPropagation(); dispatch({ type: 'RESYNC_TODO_GCAL', payload: task.id }) }}
+                className="flex items-center gap-0.5 text-xs text-stone-600 hover:text-orange-400 transition-colors"
+                title="未同步到 Google 日历，点击同步"
+              >
+                <CalendarX size={11} />
+                <span>未同步</span>
+              </button>
             )}
           </div>
         )}

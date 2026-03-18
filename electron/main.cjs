@@ -228,33 +228,14 @@ app.whenReady().then(() => {
       autoUpdater.checkForUpdates().catch(() => {})
     }, 3000)
 
-    // 发现新版本 → 弹窗询问用户是否下载
+    // 发现新版本 → 通知渲染进程显示浮窗
     autoUpdater.on('update-available', (info) => {
       const releaseNotes = typeof info.releaseNotes === 'string'
-        ? info.releaseNotes.replace(/<[^>]+>/g, '').trim()  // 去除 HTML 标签
+        ? info.releaseNotes.replace(/<[^>]+>/g, '').trim()
         : (Array.isArray(info.releaseNotes)
             ? info.releaseNotes.map(r => r.note).join('\n')
             : '')
-
-      const detail = releaseNotes
-        ? `更新内容：\n${releaseNotes}`
-        : '点击"立即更新"后台下载，下载完成后提示重启安装。'
-
-      dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'TaskFlow 有新版本',
-        message: `发现新版本 v${info.version}（当前 v${app.getVersion()}）`,
-        detail,
-        buttons: ['立即更新', '稍后再说'],
-        defaultId: 0,
-        cancelId: 1,
-      }).then(({ response }) => {
-        if (response === 0) {
-          // 通知渲染进程显示下载中状态
-          mainWindow?.webContents.send('update-downloading')
-          autoUpdater.downloadUpdate().catch(() => {})
-        }
-      })
+      mainWindow?.webContents.send('update-available', { version: info.version, releaseNotes })
     })
 
     // 已是最新版本
@@ -343,6 +324,14 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   if (reminderTimer) clearTimeout(reminderTimer)
+})
+
+// ─── 更新下载 IPC ────────────────────────────────────────────────────────────
+ipcMain.on('download-update', () => {
+  if (autoUpdater) {
+    mainWindow?.webContents.send('update-downloading')
+    autoUpdater.downloadUpdate().catch(() => {})
+  }
 })
 
 // ─── 自动更新 IPC ─────────────────────────────────────────────────────────────

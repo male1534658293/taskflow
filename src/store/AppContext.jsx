@@ -171,7 +171,13 @@ function reducer(state, action) {
 
       const newTodos = state.todos.map(t =>
         t.id === action.payload
-          ? { ...t, status: isCompleting ? 'completed' : 'todo', completedAt: isCompleting ? new Date().toISOString() : null }
+          ? {
+              ...t,
+              status: isCompleting ? 'completed' : 'todo',
+              completedAt: isCompleting ? new Date().toISOString() : null,
+              gcalEventId: isCompleting ? null : t.gcalEventId,
+              gcalEventLink: isCompleting ? null : t.gcalEventLink,
+            }
           : t
       )
 
@@ -187,6 +193,14 @@ function reducer(state, action) {
         }
       }
 
+      // 完成 → 从 Google 日历删除；撤销完成 → 重新创建
+      let gcalEntry
+      if (isCompleting && todo.gcalEventId) {
+        gcalEntry = queueDelete(todo.gcalEventId)
+      } else if (!isCompleting) {
+        gcalEntry = queueCreate(action.payload)
+      }
+
       return {
         ...state,
         todos: newTodos,
@@ -194,7 +208,7 @@ function reducer(state, action) {
         user: { ...state.user, karma: Math.max(0, state.user.karma + karmaChange) },
         modals: { ...state.modals, celebration: showCelebration || state.modals.celebration },
         sync: { ...state.sync, pendingCount: state.sync.pendingCount + 1, status: 'syncing' },
-        gcalQueue: [...state.gcalQueue, queueUpdate(action.payload)],
+        gcalQueue: gcalEntry ? [...state.gcalQueue, gcalEntry] : state.gcalQueue,
       }
     }
 
@@ -456,6 +470,14 @@ function reducer(state, action) {
       )
       return { ...state, todos: newTodos }
     }
+
+    // 重新同步单个任务到 Google 日历（点击"未同步"标记时触发）
+    case 'RESYNC_TODO_GCAL':
+      return {
+        ...state,
+        gcalQueue: [...state.gcalQueue, queueCreate(action.payload)],
+        sync: { ...state.sync, status: 'syncing', pendingCount: state.sync.pendingCount + 1 },
+      }
 
     // 清空已处理的队列条目
     case 'DEQUEUE_GCAL':

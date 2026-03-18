@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateReminderTodos: (todosJson) => ipcRenderer.send('reminder-update-todos', { todosJson }),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  downloadUpdate: () => ipcRenderer.send('download-update'),
   onUpdateAvailable: (cb) => ipcRenderer.on('update-available', cb),
   onUpdateDownloading: (cb) => ipcRenderer.on('update-downloading', cb),
   onUpdateProgress: (cb) => ipcRenderer.on('update-progress', cb),
