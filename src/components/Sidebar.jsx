@@ -5,7 +5,7 @@ import { isToday } from '../utils/helpers.js'
 
 export default function Sidebar() {
   const { state, dispatch } = useApp()
-  const { currentView, todos, user, sync, theme } = state
+  const { currentView, todos, user, sync } = state
 
   const todayIncomplete = todos.filter(
     t => isToday(t.dueDate) && t.status !== 'completed'
@@ -24,35 +24,29 @@ export default function Sidebar() {
     { id: 'settings', icon: Settings, label: '设置', badge: null },
   ]
 
-  const bgCard = theme === 'dark' ? 'bg-stone-900 border-stone-800' : 'bg-white border-stone-200'
-  const textPrimary = theme === 'dark' ? 'text-stone-100' : 'text-stone-900'
-  const textSecondary = theme === 'dark' ? 'text-stone-400' : 'text-stone-500'
-  const hoverBg = theme === 'dark' ? 'hover:bg-stone-800' : 'hover:bg-stone-100'
-  const activeBg = 'bg-orange-600 text-white'
-
   const isElectron = typeof window !== 'undefined' && !!window.electronAPI
 
   return (
-    <aside className={`w-56 flex-shrink-0 flex flex-col h-screen border-r ${bgCard} z-10`}>
+    <aside className="w-56 flex-shrink-0 flex flex-col h-screen bg-stone-900 z-10">
       {/* macOS traffic light spacer — only in Electron */}
       {isElectron && <div className="h-8 flex-shrink-0" style={{ WebkitAppRegion: 'drag' }} />}
 
       {/* Logo */}
-      <div className="p-4 border-b border-stone-800 flex items-center gap-2">
+      <div className="p-4 flex items-center gap-2">
         <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center">
           <Zap size={16} className="text-white" />
         </div>
-        <span className={`font-bold text-lg ${textPrimary}`}>TaskFlow</span>
+        <span className="font-bold text-lg text-stone-100">TaskFlow</span>
       </div>
 
       {/* User info */}
-      <div className="p-4 border-b border-stone-800">
+      <div className="px-4 pb-4">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 bg-orange-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-            L
+            {(user.name || '?')[0].toUpperCase()}
           </div>
           <div>
-            <div className={`text-sm font-medium ${textPrimary}`}>{user.name}</div>
+            <div className="text-sm font-medium text-stone-100">{user.name}</div>
             <div className="text-xs text-orange-400 font-medium">{user.karma} Karma</div>
           </div>
         </div>
@@ -68,7 +62,7 @@ export default function Sidebar() {
               key={item.id}
               onClick={() => dispatch({ type: 'SET_VIEW', payload: item.id })}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                isActive ? activeBg : `${textSecondary} ${hoverBg}`
+                isActive ? 'bg-orange-600 text-white' : 'text-stone-400 hover:bg-stone-800 hover:text-stone-100'
               }`}
             >
               <Icon size={16} />
@@ -86,11 +80,11 @@ export default function Sidebar() {
       </nav>
 
       {/* Bottom section */}
-      <div className="p-3 border-t border-stone-800 space-y-2">
+      <div className="p-3 space-y-2">
         {/* Streak */}
         <div className="flex items-center gap-2 px-2 py-1.5">
           <Flame size={14} className="text-orange-500" />
-          <span className={`text-xs ${textSecondary}`}>
+          <span className="text-xs text-stone-400">
             🔥 <span className="text-orange-400 font-medium">{user.streak}天</span> 连续
           </span>
         </div>

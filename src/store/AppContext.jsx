@@ -30,10 +30,15 @@ function loadUser() {
 
 const DEFAULT_USER = { name: '', email: '', karma: 0, streak: 0, longestStreak: 0 }
 
+// 初始化主题 class
+const savedTheme = (() => { try { return localStorage.getItem('taskflow-theme') || 'dark' } catch { return 'dark' } })()
+document.documentElement.classList.toggle('dark', savedTheme === 'dark')
+document.documentElement.classList.toggle('light', savedTheme !== 'dark')
+
 const initialState = {
   todos: loadTodos(),
   currentView: 'today',
-  theme: 'dark',
+  theme: savedTheme,
   focus: { active: false, selectedIds: [], completedFocusIds: [] },
   filters: { search: '', active: [] },
   modals: { taskDetail: null, nlpInput: false, focusSelection: false, celebration: false },
@@ -64,6 +69,7 @@ function reducer(state, action) {
       const newTheme = state.theme === 'dark' ? 'light' : 'dark'
       document.documentElement.classList.toggle('dark', newTheme === 'dark')
       document.documentElement.classList.toggle('light', newTheme !== 'dark')
+      try { localStorage.setItem('taskflow-theme', newTheme) } catch {}
       return { ...state, theme: newTheme }
     }
 
