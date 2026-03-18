@@ -29,7 +29,8 @@ export default function SettingsView() {
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState(user.name)
   const [appVersion, setAppVersion] = useState('1.0.0')
-  const [updateStatus, setUpdateStatus] = useState(null) // null | 'checking' | 'latest' | 'available' | 'error'
+  const [updateStatus, setUpdateStatus] = useState(null) // null | 'checking' | 'latest' | 'available' | 'downloading' | 'error'
+  const [downloadProgress, setDownloadProgress] = useState(0)
 
   // ── 工作日提醒 ──────────────────────────────────────────────────────────────
   const savedReminder = loadReminder()
@@ -77,6 +78,16 @@ export default function SettingsView() {
   useEffect(() => {
     if (isElectron && window.electronAPI?.getAppVersion) {
       window.electronAPI.getAppVersion().then(v => setAppVersion(v)).catch(() => {})
+    }
+    // 监听主进程推送的更新事件
+    if (isElectron && window.electronAPI?.onUpdateAvailable) {
+      window.electronAPI.onUpdateAvailable(() => setUpdateStatus('available'))
+    }
+    if (isElectron && window.electronAPI?.onUpdateDownloading) {
+      window.electronAPI.onUpdateDownloading(() => setUpdateStatus('downloading'))
+    }
+    if (isElectron && window.electronAPI?.onUpdateProgress) {
+      window.electronAPI.onUpdateProgress((_, pct) => setDownloadProgress(pct))
     }
   }, []) // eslint-disable-line
 
@@ -359,7 +370,23 @@ export default function SettingsView() {
           )}
           {updateStatus === 'available' && (
             <div className="flex items-center gap-1.5 text-xs text-orange-400 px-1">
-              <RefreshCw size={12} /> 发现新版本，正在后台下载…
+              <RefreshCw size={12} /> 发现新版本，请在弹窗中选择是否更新
+            </div>
+          )}
+          {updateStatus === 'downloading' && (
+            <div className="px-1 space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-orange-400 flex items-center gap-1.5">
+                  <RefreshCw size={12} className="animate-spin" /> 正在下载更新…
+                </span>
+                <span className="text-stone-500">{downloadProgress}%</span>
+              </div>
+              <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-orange-500 rounded-full transition-all duration-300"
+                  style={{ width: `${downloadProgress}%` }}
+                />
+              </div>
             </div>
           )}
           {updateStatus === 'dev' && (

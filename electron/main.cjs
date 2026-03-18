@@ -220,30 +220,69 @@ app.whenReady().then(() => {
   createMainWindow()
   createTray()
 
-  // Auto-update check (2s delay to let main window load)
+  // Auto-update check (3s delay to let main window load)
   if (autoUpdater && app.isPackaged) {
-    setTimeout(() => {
-      autoUpdater.checkForUpdatesAndNotify().catch(() => {})
-    }, 2000)
+    autoUpdater.autoDownload = false  // 先询问用户，再决定是否下载
 
-    autoUpdater.on('update-available', () => {
-      if (mainWindow) {
-        mainWindow.webContents.send('update-available')
-      }
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch(() => {})
+    }, 3000)
+
+    // 发现新版本 → 弹窗询问用户是否下载
+    autoUpdater.on('update-available', (info) => {
+      const releaseNotes = typeof info.releaseNotes === 'string'
+        ? info.releaseNotes.replace(/<[^>]+>/g, '').trim()  // 去除 HTML 标签
+        : (Array.isArray(info.releaseNotes)
+            ? info.releaseNotes.map(r => r.note).join('\n')
+            : '')
+
+      const detail = releaseNotes
+        ? `更新内容：\n${releaseNotes}`
+        : '点击"立即更新"后台下载，下载完成后提示重启安装。'
+
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'TaskFlow 有新版本',
+        message: `发现新版本 v${info.version}（当前 v${app.getVersion()}）`,
+        detail,
+        buttons: ['立即更新', '稍后再说'],
+        defaultId: 0,
+        cancelId: 1,
+      }).then(({ response }) => {
+        if (response === 0) {
+          // 通知渲染进程显示下载中状态
+          mainWindow?.webContents.send('update-downloading')
+          autoUpdater.downloadUpdate().catch(() => {})
+        }
+      })
     })
 
+    // 已是最新版本
+    autoUpdater.on('update-not-available', () => {
+      // 静默，不打扰用户
+    })
+
+    // 下载进度
+    autoUpdater.on('download-progress', (progress) => {
+      mainWindow?.webContents.send('update-progress', Math.round(progress.percent))
+    })
+
+    // 下载完成 → 提示重启安装
     autoUpdater.on('update-downloaded', (info) => {
       dialog.showMessageBox(mainWindow, {
         type: 'info',
-        title: 'TaskFlow 更新',
-        message: `新版本 ${info.version} 已下载完成`,
-        detail: '重启应用以安装更新',
-        buttons: ['立即重启', '稍后'],
+        title: 'TaskFlow 更新已就绪',
+        message: `v${info.version} 下载完成`,
+        detail: '点击"立即重启"完成安装，或下次启动时自动安装。',
+        buttons: ['立即重启', '下次启动时安装'],
         defaultId: 0,
       }).then(({ response }) => {
         if (response === 0) autoUpdater.quitAndInstall()
       })
     })
+
+    // 检查出错静默处理
+    autoUpdater.on('error', () => {})
   }
 
   // Global shortcut: Cmd+Shift+T to toggle float window
