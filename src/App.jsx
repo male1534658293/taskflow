@@ -26,6 +26,7 @@ function Layout() {
   const [updateInfo, setUpdateInfo] = useState(null)
   const [updateStatus, setUpdateStatus] = useState(null)
   const [downloadPct, setDownloadPct] = useState(0)
+  const [updateError, setUpdateError] = useState(null)
 
   useKeyboardShortcuts()
 
@@ -34,6 +35,7 @@ function Layout() {
     window.electronAPI.onUpdateAvailable?.((_, info) => setUpdateInfo(info))
     window.electronAPI.onUpdateDownloading?.(() => setUpdateStatus('downloading'))
     window.electronAPI.onUpdateProgress?.((_, pct) => setDownloadPct(pct))
+    window.electronAPI.onUpdateError?.((_, msg) => setUpdateError(msg))
   }, [])
 
   if (isFloatMode) {
@@ -64,6 +66,15 @@ function Layout() {
       {modals.nlpInput && <NLPInput />}
       {modals.focusSelection && <FocusSelectionModal />}
       {modals.celebration && <Celebration />}
+
+      {/* 更新错误提示（仅开发调试用） */}
+      {updateError && !updateInfo && (
+        <div className="fixed bottom-5 right-5 z-50 w-72 bg-red-900/80 border border-red-700 rounded-xl shadow-2xl p-4">
+          <div className="text-xs font-semibold text-red-300 mb-1">自动更新错误</div>
+          <div className="text-xs text-red-400 break-all">{updateError}</div>
+          <button onClick={() => setUpdateError(null)} className="mt-2 text-xs text-red-500 hover:text-red-300">关闭</button>
+        </div>
+      )}
 
       {/* 更新通知浮窗 */}
       {updateInfo && (

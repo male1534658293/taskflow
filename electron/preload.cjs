@@ -19,4 +19,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateAvailable: (cb) => ipcRenderer.on('update-available', cb),
   onUpdateDownloading: (cb) => ipcRenderer.on('update-downloading', cb),
   onUpdateProgress: (cb) => ipcRenderer.on('update-progress', cb),
+  onUpdateError: (cb) => ipcRenderer.on('update-error', cb),
 })

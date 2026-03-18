@@ -262,8 +262,10 @@ app.whenReady().then(() => {
       })
     })
 
-    // 检查出错静默处理
-    autoUpdater.on('error', () => {})
+    // 检查出错 → 通知渲染进程
+    autoUpdater.on('error', (err) => {
+      mainWindow?.webContents.send('update-error', err?.message || 'unknown error')
+    })
   }
 
   // Global shortcut: Cmd+Shift+T to toggle float window
