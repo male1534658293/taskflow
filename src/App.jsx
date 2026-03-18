@@ -24,9 +24,10 @@ function Layout() {
   const { state } = useApp()
   const { currentView, modals } = state
   const [updateInfo, setUpdateInfo] = useState(null)
-  const [updateStatus, setUpdateStatus] = useState(null)
+  const [updateStatus, setUpdateStatus] = useState(null) // null | 'downloading' | 'done'
   const [downloadPct, setDownloadPct] = useState(0)
   const [updateError, setUpdateError] = useState(null)
+  const [downloadedPath, setDownloadedPath] = useState(null)
 
   useKeyboardShortcuts()
 
@@ -35,6 +36,10 @@ function Layout() {
     window.electronAPI.onUpdateAvailable?.((_, info) => setUpdateInfo(info))
     window.electronAPI.onUpdateDownloading?.(() => setUpdateStatus('downloading'))
     window.electronAPI.onUpdateProgress?.((_, pct) => setDownloadPct(pct))
+    window.electronAPI.onUpdateDownloaded?.((_, { filePath }) => {
+      setUpdateStatus('done')
+      setDownloadedPath(filePath)
+    })
     window.electronAPI.onUpdateError?.((_, msg) => setUpdateError(msg))
   }, [])
 
@@ -88,7 +93,7 @@ function Layout() {
           ) : (
             <p className="text-xs text-stone-500 mb-3">点击立即更新后台下载，完成后提示重启安装。</p>
           )}
-          {updateStatus === 'downloading' ? (
+          {updateStatus === 'downloading' && (
             <div>
               <div className="flex justify-between text-xs mb-1.5">
                 <span className="text-stone-400">下载中…</span>
@@ -98,13 +103,25 @@ function Layout() {
                 <div className="h-full bg-orange-500 rounded-full transition-all duration-300" style={{ width: `${downloadPct}%` }} />
               </div>
             </div>
-          ) : (
+          )}
+          {updateStatus === 'done' && (
+            <div className="space-y-2">
+              <p className="text-xs text-green-400">✅ 下载完成！打开安装包完成安装。</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => window.electronAPI?.openDownloadedFile?.(downloadedPath)}
+                  className="flex-1 text-xs bg-green-600 hover:bg-green-500 text-white py-1.5 rounded-lg transition-colors font-medium"
+                >
+                  打开安装包
+                </button>
+                <button onClick={() => setUpdateInfo(null)} className="text-xs text-stone-400 hover:text-stone-200 px-3 py-1.5 rounded-lg hover:bg-stone-700 transition-colors">关闭</button>
+              </div>
+            </div>
+          )}
+          {!updateStatus && (
             <div className="flex gap-2">
               <button
-                onClick={() => {
-                  window.electronAPI?.downloadUpdate?.()
-                  setUpdateStatus('downloading')
-                }}
+                onClick={() => window.electronAPI?.downloadUpdate?.({ downloadUrl: updateInfo.downloadUrl, fileName: updateInfo.fileName })}
                 className="flex-1 text-xs bg-orange-600 hover:bg-orange-500 text-white py-1.5 rounded-lg transition-colors font-medium"
               >
                 立即更新

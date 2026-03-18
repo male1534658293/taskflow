@@ -1,16 +1,75 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, screen, Menu, Tray, nativeImage, shell, Notification, dialog } = require('electron')
 const path = require('path')
 const http = require('http')
+const https = require('https')
+const fs = require('fs')
 
-// Auto-updater (only in packaged app)
-let autoUpdater = null
-try {
-  autoUpdater = require('electron-updater').autoUpdater
-  autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
-  autoUpdater.logger = null  // suppress logs in production
-} catch (e) {
-  // electron-updater not available in dev mode
+// ─── GitHub API 自动更新（无需代码签名）────────────────────────────────────────
+const GH_OWNER = 'male1534658293'
+const GH_REPO = 'taskflow'
+
+function ghApiGet(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { 'User-Agent': 'TaskFlow-Updater' } }, (res) => {
+      let data = ''
+      res.on('data', c => data += c)
+      res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error('parse error')) } })
+    }).on('error', reject)
+  })
+}
+
+function compareVersions(v1, v2) {
+  const p1 = v1.split('.').map(Number)
+  const p2 = v2.split('.').map(Number)
+  for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+    const d = (p1[i] || 0) - (p2[i] || 0)
+    if (d !== 0) return d
+  }
+  return 0
+}
+
+function downloadFile(url, destPath, onProgress) {
+  return new Promise((resolve, reject) => {
+    function doGet(u, redirects) {
+      if (redirects > 5) { reject(new Error('too many redirects')); return }
+      https.get(u, { headers: { 'User-Agent': 'TaskFlow-Updater' } }, (res) => {
+        if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
+          doGet(res.headers.location, redirects + 1); return
+        }
+        if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
+        const total = parseInt(res.headers['content-length'] || '0', 10)
+        let done = 0
+        const file = fs.createWriteStream(destPath)
+        res.on('data', chunk => {
+          done += chunk.length
+          if (total > 0) onProgress(Math.round(done / total * 100))
+        })
+        res.pipe(file)
+        file.on('finish', () => { file.close(); resolve(destPath) })
+        file.on('error', err => { try { fs.unlinkSync(destPath) } catch {} reject(err) })
+      }).on('error', reject)
+    }
+    doGet(url, 0)
+  })
+}
+
+async function checkForUpdatesGitHub() {
+  try {
+    const release = await ghApiGet(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest`)
+    const latest = release.tag_name?.replace(/^v/, '')
+    if (!latest) return
+    if (compareVersions(latest, app.getVersion()) > 0) {
+      const dmg = release.assets?.find(a => a.name.endsWith('.dmg'))
+      mainWindow?.webContents.send('update-available', {
+        version: latest,
+        releaseNotes: (release.body || '').trim(),
+        downloadUrl: dmg?.browser_download_url || null,
+        fileName: dmg?.name || `TaskFlow-${latest}-arm64.dmg`,
+      })
+    }
+  } catch (e) {
+    mainWindow?.webContents.send('update-error', e.message || 'unknown')
+  }
 }
 
 let mainWindow = null
@@ -220,52 +279,9 @@ app.whenReady().then(() => {
   createMainWindow()
   createTray()
 
-  // Auto-update check (3s delay to let main window load)
-  if (autoUpdater && app.isPackaged) {
-    autoUpdater.autoDownload = false  // 先询问用户，再决定是否下载
-
-    setTimeout(() => {
-      autoUpdater.checkForUpdates().catch(() => {})
-    }, 3000)
-
-    // 发现新版本 → 通知渲染进程显示浮窗
-    autoUpdater.on('update-available', (info) => {
-      const releaseNotes = typeof info.releaseNotes === 'string'
-        ? info.releaseNotes.replace(/<[^>]+>/g, '').trim()
-        : (Array.isArray(info.releaseNotes)
-            ? info.releaseNotes.map(r => r.note).join('\n')
-            : '')
-      mainWindow?.webContents.send('update-available', { version: info.version, releaseNotes })
-    })
-
-    // 已是最新版本
-    autoUpdater.on('update-not-available', () => {
-      // 静默，不打扰用户
-    })
-
-    // 下载进度
-    autoUpdater.on('download-progress', (progress) => {
-      mainWindow?.webContents.send('update-progress', Math.round(progress.percent))
-    })
-
-    // 下载完成 → 提示重启安装
-    autoUpdater.on('update-downloaded', (info) => {
-      dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'TaskFlow 更新已就绪',
-        message: `v${info.version} 下载完成`,
-        detail: '点击"立即重启"完成安装，或下次启动时自动安装。',
-        buttons: ['立即重启', '下次启动时安装'],
-        defaultId: 0,
-      }).then(({ response }) => {
-        if (response === 0) autoUpdater.quitAndInstall()
-      })
-    })
-
-    // 检查出错 → 通知渲染进程
-    autoUpdater.on('error', (err) => {
-      mainWindow?.webContents.send('update-error', err?.message || 'unknown error')
-    })
+  // Auto-update check via GitHub API (3s delay)
+  if (app.isPackaged) {
+    setTimeout(() => checkForUpdatesGitHub(), 3000)
   }
 
   // Global shortcut: Cmd+Shift+T to toggle float window
@@ -328,25 +344,47 @@ app.on('will-quit', () => {
   if (reminderTimer) clearTimeout(reminderTimer)
 })
 
-// ─── 更新下载 IPC ────────────────────────────────────────────────────────────
-ipcMain.on('download-update', () => {
-  if (autoUpdater) {
-    mainWindow?.webContents.send('update-downloading')
-    autoUpdater.downloadUpdate().catch(() => {})
-  }
-})
-
 // ─── 自动更新 IPC ─────────────────────────────────────────────────────────────
 ipcMain.handle('check-for-updates', async () => {
-  if (!autoUpdater || !app.isPackaged) {
-    return { status: 'dev', version: app.getVersion() }
-  }
+  if (!app.isPackaged) return { status: 'dev', version: app.getVersion() }
   try {
-    const result = await autoUpdater.checkForUpdates()
-    return { status: 'checked', version: app.getVersion(), updateInfo: result?.updateInfo || null }
+    const release = await ghApiGet(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest`)
+    const latest = release.tag_name?.replace(/^v/, '')
+    const current = app.getVersion()
+    if (!latest) return { status: 'error', error: 'no release found' }
+    if (compareVersions(latest, current) > 0) {
+      const dmg = release.assets?.find(a => a.name.endsWith('.dmg'))
+      mainWindow?.webContents.send('update-available', {
+        version: latest,
+        releaseNotes: (release.body || '').trim(),
+        downloadUrl: dmg?.browser_download_url || null,
+        fileName: dmg?.name || `TaskFlow-${latest}-arm64.dmg`,
+      })
+      return { status: 'available', version: current, latestVersion: latest }
+    }
+    return { status: 'latest', version: current }
   } catch (e) {
     return { status: 'error', error: e.message }
   }
+})
+
+ipcMain.handle('download-update', async (e, { downloadUrl, fileName }) => {
+  const destPath = path.join(app.getPath('downloads'), fileName)
+  mainWindow?.webContents.send('update-downloading')
+  try {
+    await downloadFile(downloadUrl, destPath, (pct) => {
+      mainWindow?.webContents.send('update-progress', pct)
+    })
+    mainWindow?.webContents.send('update-downloaded', { filePath: destPath })
+    return { ok: true, filePath: destPath }
+  } catch (e) {
+    mainWindow?.webContents.send('update-error', e.message)
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.on('open-downloaded-file', (e, filePath) => {
+  shell.openPath(filePath)
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
