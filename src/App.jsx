@@ -27,7 +27,6 @@ function Layout() {
   const [updateStatus, setUpdateStatus] = useState(null) // null | 'downloading' | 'done'
   const [downloadPct, setDownloadPct] = useState(0)
   const [updateError, setUpdateError] = useState(null)
-  const [downloadedPath, setDownloadedPath] = useState(null)
 
   useKeyboardShortcuts()
 
@@ -36,10 +35,7 @@ function Layout() {
     window.electronAPI.onUpdateAvailable?.((_, info) => setUpdateInfo(info))
     window.electronAPI.onUpdateDownloading?.(() => setUpdateStatus('downloading'))
     window.electronAPI.onUpdateProgress?.((_, pct) => setDownloadPct(pct))
-    window.electronAPI.onUpdateDownloaded?.((_, { filePath }) => {
-      setUpdateStatus('done')
-      setDownloadedPath(filePath)
-    })
+    window.electronAPI.onUpdateDownloaded?.(() => setUpdateStatus('done'))
     window.electronAPI.onUpdateError?.((_, msg) => setUpdateError(msg))
   }, [])
 
@@ -106,22 +102,22 @@ function Layout() {
           )}
           {updateStatus === 'done' && (
             <div className="space-y-2">
-              <p className="text-xs text-green-400">✅ 下载完成！打开安装包完成安装。</p>
+              <p className="text-xs text-green-400">✅ 下载完成，点击安装并重启。</p>
               <div className="flex gap-2">
                 <button
-                  onClick={() => window.electronAPI?.openDownloadedFile?.(downloadedPath)}
+                  onClick={() => window.electronAPI?.installUpdate?.()}
                   className="flex-1 text-xs bg-green-600 hover:bg-green-500 text-white py-1.5 rounded-lg transition-colors font-medium"
                 >
-                  打开安装包
+                  立即安装并重启
                 </button>
-                <button onClick={() => setUpdateInfo(null)} className="text-xs text-stone-400 hover:text-stone-200 px-3 py-1.5 rounded-lg hover:bg-stone-700 transition-colors">关闭</button>
+                <button onClick={() => setUpdateInfo(null)} className="text-xs text-stone-400 hover:text-stone-200 px-3 py-1.5 rounded-lg hover:bg-stone-700 transition-colors">稍后</button>
               </div>
             </div>
           )}
           {!updateStatus && (
             <div className="flex gap-2">
               <button
-                onClick={() => window.electronAPI?.downloadUpdate?.({ downloadUrl: updateInfo.downloadUrl, fileName: updateInfo.fileName })}
+                onClick={() => window.electronAPI?.downloadUpdate?.()}
                 className="flex-1 text-xs bg-orange-600 hover:bg-orange-500 text-white py-1.5 rounded-lg transition-colors font-medium"
               >
                 立即更新
