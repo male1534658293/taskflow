@@ -8,7 +8,9 @@ const {
   nativeImage,
   ipcMain,
   screen,
+  dialog,
 } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow = null;
 let floatingWindow = null;
@@ -283,10 +285,70 @@ ipcMain.handle('floating:expand', async (_event, expand) => {
   return { ok: true };
 });
 
+// ===== AUTO UPDATER =====
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = false;
+
+  autoUpdater.on('update-available', (info) => {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: '发现新版本',
+      message: `Task Flow ${info.version} 已发布`,
+      detail: '是否立即下载更新？',
+      buttons: ['立即下载', '稍后提醒'],
+      defaultId: 0,
+    }).then(({ response }) => {
+      if (response === 0) {
+        autoUpdater.downloadUpdate();
+        if (mainWindow) mainWindow.webContents.send('update-downloading');
+      }
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    if (mainWindow) mainWindow.webContents.send('update-not-available', app.getVersion());
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    if (mainWindow) mainWindow.webContents.send('update-progress', Math.round(progress.percent));
+  });
+
+  autoUpdater.on('update-downloaded', () => {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: '更新已就绪',
+      message: '新版本下载完成，重启即可完成更新',
+      buttons: ['立即重启', '稍后重启'],
+      defaultId: 0,
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall();
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    if (mainWindow) mainWindow.webContents.send('update-error', err.message);
+  });
+}
+
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    await autoUpdater.checkForUpdates();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 app.whenReady().then(async () => {
   await startEmbeddedServer();
   createTray();
   createMainWindow();
+  setupAutoUpdater();
+
+  // Check for updates 5 seconds after launch (only in packaged app)
+  if (app.isPackaged) {
+    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5000);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
