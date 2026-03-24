@@ -483,6 +483,19 @@ function reducer(state, action) {
     case 'DEQUEUE_GCAL':
       return { ...state, gcalQueue: state.gcalQueue.slice(action.payload) }
 
+    // 从 Google Calendar 导入事件（不触发回推到 Google 的队列）
+    case 'IMPORT_GCAL_TODOS': {
+      const incoming = action.payload
+      const existingGcalIds = new Set(state.todos.map(t => t.gcalEventId).filter(Boolean))
+      const newTodos = incoming.filter(t => !existingGcalIds.has(t.gcalEventId))
+      if (!newTodos.length) return state
+      return {
+        ...state,
+        todos: [...newTodos, ...state.todos],
+        sync: { ...state.sync, status: 'syncing', pendingCount: state.sync.pendingCount + 1 },
+      }
+    }
+
     default:
       return state
   }
