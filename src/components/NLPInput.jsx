@@ -91,7 +91,7 @@ export default function NLPInput() {
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isCreating}
-            placeholder="next monday 3pm p1 @工作 项目提案"
+            placeholder="九点三十 开会 · 明天下午两点 p1 @工作 · next monday 3pm"
             className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3 text-stone-100 placeholder-stone-500 text-sm focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50"
           />
 
@@ -211,7 +211,7 @@ export default function NLPInput() {
           {/* Syntax hints */}
           <div className="mt-2 px-1">
             <div className="flex flex-wrap gap-1">
-              {['p1-p4', 'tomorrow', 'next monday', 'in 3 days', '@tag', '#project', '15:00'].map(hint => (
+              {['p1-p4', '九点三十', '下午两点半', '明天', '后天', 'next monday', '@tag', '#project'].map(hint => (
                 <span key={hint} className="text-xs bg-stone-800 text-stone-500 px-2 py-0.5 rounded-full">{hint}</span>
               ))}
             </div>

@@ -9,6 +9,7 @@ import GanttView from './views/GanttView.jsx'
 import StatsView from './views/StatsView.jsx'
 import SettingsView from './views/SettingsView.jsx'
 import AchievementsView from './views/AchievementsView.jsx'
+import TagsView from './views/TagsView.jsx'
 import TaskDetailModal from './components/TaskDetailModal.jsx'
 import NLPInput from './components/NLPInput.jsx'
 import FocusSelectionModal from './components/FocusSelectionModal.jsx'
@@ -52,6 +53,7 @@ function Layout() {
     stats: StatsView,
     settings: SettingsView,
     achievements: AchievementsView,
+    tags: TagsView,
   }
 
   const CurrentView = views[currentView] || TodayView

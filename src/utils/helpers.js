@@ -127,6 +127,59 @@ export function parseNLP(input) {
     title = title.replace(ampmMatch[0], '').trim()
   }
 
+  // 中文时间解析：九点三十 / 9点30 / 下午两点半 / 上午十点
+  if (!dueTime) {
+    const CN_NUM = { 零:0, 一:1, 二:2, 三:3, 四:4, 五:5, 六:6, 七:7, 八:8, 九:9, 十:10, 两:2 }
+    function parseCNNum(s) {
+      if (!s || !s.length) return 0
+      const n = parseInt(s, 10); if (!isNaN(n)) return n
+      let result = 0, cur = 0
+      for (const ch of s) {
+        const v = CN_NUM[ch]; if (v === undefined) return null
+        if (v === 10) { result += (cur || 1) * 10; cur = 0 } else cur = v
+      }
+      return result + cur
+    }
+    let forcePM = false, forceAM = false
+    const periodM = title.match(/(下午|傍晚|晚上|夜里|午后|中午|上午|早上|早晨|凌晨)/)
+    if (periodM) {
+      if (/下午|傍晚|晚上|夜里|午后|中午/.test(periodM[1])) forcePM = true
+      else forceAM = true
+      title = title.replace(periodM[0], '')
+    }
+    // 九点半
+    const halfM = title.match(/([零一二三四五六七八九十两\d]+)[点时]半/)
+    if (halfM) {
+      const h = parseCNNum(halfM[1])
+      if (h !== null) {
+        let hours = h
+        if (forcePM && hours < 12) hours += 12
+        if (forceAM && hours === 12) hours = 0
+        if (!forcePM && !forceAM && hours >= 1 && hours <= 7) hours += 12
+        dueTime = `${String(hours).padStart(2, '0')}:30`
+        if (!dueDate) dueDate = toLocalDateStr(todayDate)
+        title = title.replace(halfM[0], '')
+      }
+    }
+    // 九点三十 / 9点30 / 九点
+    if (!dueTime) {
+      const timeM = title.match(/([零一二三四五六七八九十两\d]+)[点时]([零一二三四五六七八九十\d]*)[分]?/)
+      if (timeM) {
+        const h = parseCNNum(timeM[1])
+        const m = timeM[2] ? (parseCNNum(timeM[2]) || 0) : 0
+        if (h !== null) {
+          let hours = h
+          if (forcePM && hours < 12) hours += 12
+          if (forceAM && hours === 12) hours = 0
+          if (!forcePM && !forceAM && hours >= 1 && hours <= 7) hours += 12
+          dueTime = `${String(hours).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+          if (!dueDate) dueDate = toLocalDateStr(todayDate)
+          title = title.replace(timeM[0], '')
+        }
+      }
+    }
+  }
+
   // Clean up extra spaces
   title = title.replace(/\s+/g, ' ').trim()
 
