@@ -1,0 +1,46 @@
+{
+  "name": "todo-app",
+  "version": "2.0.0",
+  "description": "Task Flow - Todo app with calendar, Chinese NLP, Google Calendar sync, and built-in browser",
+  "main": "main.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "desktop": "electron .",
+    "dist:mac": "electron-builder --mac dmg"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "electron": "^37.3.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.bytedance.taskflow",
+    "productName": "Task Flow",
+    "files": [
+      "main.js",
+      "preload.js",
+      "preload-floating.js",
+      "server.js",
+      "public/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "dmg": {
+      "artifactName": "TaskFlow-${version}-${arch}.${ext}"
+    }
+  }
+}
