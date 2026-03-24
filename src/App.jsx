@@ -25,7 +25,7 @@ function Layout() {
   const { state } = useApp()
   const { currentView, modals } = state
   const [updateInfo, setUpdateInfo] = useState(null)
-  const [updateStatus, setUpdateStatus] = useState(null) // null | 'downloading' | 'done'
+  const [updateStatus, setUpdateStatus] = useState(null) // null | 'downloading' | 'verifying' | 'done'
   const [downloadPct, setDownloadPct] = useState(0)
   const [updateError, setUpdateError] = useState(null)
 
@@ -36,8 +36,9 @@ function Layout() {
     window.electronAPI.onUpdateAvailable?.((_, info) => setUpdateInfo(info))
     window.electronAPI.onUpdateDownloading?.(() => setUpdateStatus('downloading'))
     window.electronAPI.onUpdateProgress?.((_, pct) => setDownloadPct(pct))
+    window.electronAPI.onUpdateVerifying?.(() => setUpdateStatus('verifying'))
     window.electronAPI.onUpdateDownloaded?.(() => setUpdateStatus('done'))
-    window.electronAPI.onUpdateError?.((_, msg) => setUpdateError(msg))
+    window.electronAPI.onUpdateError?.((_, msg) => { setUpdateError(msg); setUpdateStatus(null) })
   }, [])
 
   if (isFloatMode) {
@@ -70,8 +71,8 @@ function Layout() {
       {modals.focusSelection && <FocusSelectionModal />}
       {modals.celebration && <Celebration />}
 
-      {/* 更新错误提示（仅开发调试用） */}
-      {updateError && !updateInfo && (
+      {/* 更新错误提示 */}
+      {updateError && (
         <div className="fixed bottom-5 right-5 z-50 w-72 bg-red-900/80 border border-red-700 rounded-xl shadow-2xl p-4">
           <div className="text-xs font-semibold text-red-300 mb-1">自动更新错误</div>
           <div className="text-xs text-red-400 break-all">{updateError}</div>
@@ -91,15 +92,23 @@ function Layout() {
           ) : (
             <p className="text-xs text-stone-500 mb-3">点击立即更新后台下载，完成后提示重启安装。</p>
           )}
-          {updateStatus === 'downloading' && (
+          {(updateStatus === 'downloading' || updateStatus === 'verifying') && (
             <div>
               <div className="flex justify-between text-xs mb-1.5">
-                <span className="text-stone-400">下载中…</span>
-                <span className="text-stone-400">{downloadPct}%</span>
+                <span className="text-stone-400">
+                  {updateStatus === 'verifying' ? '验证文件完整性…' : '下载中…'}
+                </span>
+                <span className="text-stone-400">{updateStatus === 'verifying' ? '100%' : `${downloadPct}%`}</span>
               </div>
               <div className="h-1.5 bg-stone-700 rounded-full overflow-hidden">
-                <div className="h-full bg-orange-500 rounded-full transition-all duration-300" style={{ width: `${downloadPct}%` }} />
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${updateStatus === 'verifying' ? 'bg-blue-500 animate-pulse' : 'bg-orange-500'}`}
+                  style={{ width: `${updateStatus === 'verifying' ? 100 : downloadPct}%` }}
+                />
               </div>
+              {updateStatus === 'verifying' && (
+                <p className="text-xs text-stone-500 mt-1.5">正在校验更新包，请稍候…</p>
+              )}
             </div>
           )}
           {updateStatus === 'done' && (

@@ -224,7 +224,7 @@ app.whenReady().then(() => {
   if (autoUpdater && app.isPackaged) {
     setTimeout(() => {
       autoUpdater.checkForUpdates().catch(err => {
-        mainWindow?.webContents.send('update-error', err?.message || 'check failed')
+        sendToRenderer('update-error', err?.message || 'check failed')
       })
     }, 3000)
 
@@ -232,20 +232,28 @@ app.whenReady().then(() => {
       const releaseNotes = typeof info.releaseNotes === 'string'
         ? info.releaseNotes.replace(/<[^>]+>/g, '').trim()
         : (Array.isArray(info.releaseNotes) ? info.releaseNotes.map(r => r.note).join('\n') : '')
-      mainWindow?.webContents.send('update-available', { version: info.version, releaseNotes })
+      sendToRenderer('update-available', { version: info.version, releaseNotes })
     })
 
     autoUpdater.on('download-progress', (progress) => {
-      mainWindow?.webContents.send('update-progress', Math.round(progress.percent))
+      sendToRenderer('update-progress', Math.round(progress.percent))
+      // When download hits 100%, ZIP still needs sha512 verification + staging
+      // Send a "verifying" signal so the UI shows feedback instead of looking frozen
+      if (Math.round(progress.percent) >= 100) {
+        sendToRenderer('update-verifying')
+      }
     })
 
     // 下载完成 → 通知渲染进程，用户确认后静默重启安装
+    let verifyTimeout = null
     autoUpdater.on('update-downloaded', () => {
-      mainWindow?.webContents.send('update-downloaded', {})
+      if (verifyTimeout) { clearTimeout(verifyTimeout); verifyTimeout = null }
+      sendToRenderer('update-downloaded', {})
     })
 
     autoUpdater.on('error', (err) => {
-      mainWindow?.webContents.send('update-error', err?.message || 'unknown')
+      if (verifyTimeout) { clearTimeout(verifyTimeout); verifyTimeout = null }
+      sendToRenderer('update-error', err?.message || 'unknown')
     })
   }
 
@@ -265,6 +273,15 @@ app.whenReady().then(() => {
     if (!mainWindow) createMainWindow()
   })
 })
+
+// ─── Helper: safely send to renderer (checks window not destroyed) ───────────
+function sendToRenderer(event, data) {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(event, data)
+    }
+  } catch {}
+}
 
 // IPC handlers
 ipcMain.on('open-float-window', () => createFloatWindow())
@@ -323,9 +340,9 @@ ipcMain.handle('check-for-updates', async () => {
 // 开始下载
 ipcMain.on('download-update', () => {
   if (!autoUpdater) return
-  mainWindow?.webContents.send('update-downloading')
+  sendToRenderer('update-downloading')
   autoUpdater.downloadUpdate().catch(err => {
-    mainWindow?.webContents.send('update-error', err?.message)
+    sendToRenderer('update-error', err?.message || 'download failed')
   })
 })
 
