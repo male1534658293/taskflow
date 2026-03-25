@@ -3,6 +3,18 @@
  * 凭据可在设置界面输入后保存到 localStorage，无需重新构建应用
  */
 
+// ─── 升级清理：清除旧版 demo token，避免升级后状态混乱 ───────────────────────
+;(function clearLegacyDemoTokens() {
+  try {
+    const token = localStorage.getItem('gcal_token')
+    if (token && token.startsWith('demo_token_')) {
+      localStorage.removeItem('gcal_token')
+      localStorage.removeItem('gcal_token_expiry')
+      localStorage.removeItem('gcal_email')
+    }
+  } catch {}
+})()
+
 // ─── Credentials (runtime localStorage > compile-time env) ──────────────────
 
 export function getClientId() {

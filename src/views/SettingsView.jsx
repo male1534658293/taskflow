@@ -25,7 +25,6 @@ export default function SettingsView() {
   const [nameInput, setNameInput] = useState(user.name)
   const [appVersion, setAppVersion] = useState('1.0.0')
   const [updateStatus, setUpdateStatus] = useState(null)
-  const [downloadProgress, setDownloadProgress] = useState(0)
   const [importMsg, setImportMsg] = useState(null)
 
   const isElectron = !!(window.electronAPI)
@@ -36,12 +35,6 @@ export default function SettingsView() {
     }
     if (isElectron && window.electronAPI?.onUpdateAvailable) {
       window.electronAPI.onUpdateAvailable(() => setUpdateStatus('available'))
-    }
-    if (isElectron && window.electronAPI?.onUpdateDownloading) {
-      window.electronAPI.onUpdateDownloading(() => setUpdateStatus('downloading'))
-    }
-    if (isElectron && window.electronAPI?.onUpdateProgress) {
-      window.electronAPI.onUpdateProgress((_, pct) => setDownloadProgress(pct))
     }
   }, []) // eslint-disable-line
 
@@ -287,16 +280,13 @@ export default function SettingsView() {
             </button>
           </div>
           {updateStatus === 'latest' && <div className="flex items-center gap-1.5 text-xs text-green-400 px-1"><Check size={12} /> 已是最新版本</div>}
-          {updateStatus === 'available' && <div className="flex items-center gap-1.5 text-xs text-orange-400 px-1"><RefreshCw size={12} /> 发现新版本，请在弹窗中选择是否更新</div>}
-          {updateStatus === 'downloading' && (
-            <div className="px-1 space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-orange-400 flex items-center gap-1.5"><RefreshCw size={12} className="animate-spin" /> 正在下载更新…</span>
-                <span className="text-stone-500">{downloadProgress}%</span>
-              </div>
-              <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden">
-                <div className="h-full bg-orange-500 rounded-full transition-all duration-300" style={{ width: `${downloadProgress}%` }} />
-              </div>
+          {updateStatus === 'available' && (
+            <div className="flex items-center gap-2 px-1">
+              <span className="text-xs text-orange-400 flex items-center gap-1.5"><RefreshCw size={12} /> 发现新版本</span>
+              <button
+                onClick={() => window.electronAPI?.openReleasePage?.()}
+                className="text-xs text-orange-500 hover:text-orange-300 underline"
+              >前往下载</button>
             </div>
           )}
           {updateStatus === 'dev' && <div className="text-xs text-stone-600 px-1">开发模式，跳过更新检查</div>}

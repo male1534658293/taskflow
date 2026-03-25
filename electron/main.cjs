@@ -337,39 +337,10 @@ ipcMain.handle('check-for-updates', async () => {
   }
 })
 
-// 开始下载
-ipcMain.on('download-update', () => {
-  if (!autoUpdater) return
-  sendToRenderer('update-downloading')
-  autoUpdater.downloadUpdate().catch(err => {
-    sendToRenderer('update-error', err?.message || 'download failed')
-  })
-})
-
-// 下载完成后用户点击"立即安装" → 安装并重启
-ipcMain.on('install-update', () => {
-  if (!autoUpdater) return
-
-  // On macOS, electron-updater's built-in relaunch is unreliable for unsigned apps.
-  // Spawn a detached shell process that waits for the old app to quit, then opens the new one.
-  if (process.platform === 'darwin') {
-    const execMatch = process.execPath.match(/^(.+\.app)\//)
-    if (execMatch) {
-      const appPath = execMatch[1].replace(/'/g, "'\\''")
-      const { spawn } = require('child_process')
-      const child = spawn('sh', ['-c', `sleep 3 && open -n '${appPath}'`], {
-        detached: true,
-        stdio: 'ignore',
-      })
-      child.unref()
-      // Let electron-updater install but skip its own relaunch attempt (isForceRunAfter=false)
-      autoUpdater.quitAndInstall(false, false)
-      return
-    }
-  }
-
-  // Non-macOS fallback
-  autoUpdater.quitAndInstall(false, true)
+// 打开 GitHub releases 页面 — 用户手动下载 DMG 安装
+// macOS Squirrel.Mac (ShipIt) 强制校验代码签名，未签名 app 无法自动安装，改为引导手动下载
+ipcMain.on('open-release-page', () => {
+  shell.openExternal('https://github.com/male1534658293/taskflow/releases/latest')
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
