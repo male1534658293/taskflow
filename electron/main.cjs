@@ -346,9 +346,30 @@ ipcMain.on('download-update', () => {
   })
 })
 
-// 下载完成后用户点击"立即安装" → 静默重启
+// 下载完成后用户点击"立即安装" → 安装并重启
 ipcMain.on('install-update', () => {
-  if (autoUpdater) autoUpdater.quitAndInstall(false, true)
+  if (!autoUpdater) return
+
+  // On macOS, electron-updater's built-in relaunch is unreliable for unsigned apps.
+  // Spawn a detached shell process that waits for the old app to quit, then opens the new one.
+  if (process.platform === 'darwin') {
+    const execMatch = process.execPath.match(/^(.+\.app)\//)
+    if (execMatch) {
+      const appPath = execMatch[1].replace(/'/g, "'\\''")
+      const { spawn } = require('child_process')
+      const child = spawn('sh', ['-c', `sleep 3 && open -n '${appPath}'`], {
+        detached: true,
+        stdio: 'ignore',
+      })
+      child.unref()
+      // Let electron-updater install but skip its own relaunch attempt (isForceRunAfter=false)
+      autoUpdater.quitAndInstall(false, false)
+      return
+    }
+  }
+
+  // Non-macOS fallback
+  autoUpdater.quitAndInstall(false, true)
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
