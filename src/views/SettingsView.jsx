@@ -25,6 +25,7 @@ export default function SettingsView() {
   const [nameInput, setNameInput] = useState(user.name)
   const [appVersion, setAppVersion] = useState('1.0.0')
   const [updateStatus, setUpdateStatus] = useState(null)
+  const [updateInfo, setUpdateInfo] = useState(null)
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [updateError, setUpdateError] = useState(null)
   const [importMsg, setImportMsg] = useState(null)
@@ -37,6 +38,9 @@ export default function SettingsView() {
     }
     if (isElectron && window.electronAPI?.getUpdateStatus) {
       window.electronAPI.getUpdateStatus().then(status => {
+        if (status?.version) {
+          setUpdateInfo(prev => ({ ...prev, version: status.version, releaseUrl: status.releaseUrl || prev?.releaseUrl }))
+        }
         if (status?.downloaded) {
           setUpdateStatus('downloaded')
           setDownloadProgress(100)
@@ -47,10 +51,17 @@ export default function SettingsView() {
       }).catch(() => {})
     }
     if (isElectron && window.electronAPI?.onUpdateAvailable) {
-      window.electronAPI.onUpdateAvailable(() => setUpdateStatus('available'))
+      window.electronAPI.onUpdateAvailable((_, payload) => {
+        setUpdateInfo(payload || null)
+        setUpdateStatus('available')
+        setUpdateError(null)
+      })
     }
     if (isElectron && window.electronAPI?.onUpdateNotAvailable) {
-      window.electronAPI.onUpdateNotAvailable(() => setUpdateStatus('latest'))
+      window.electronAPI.onUpdateNotAvailable(() => {
+        setUpdateInfo(null)
+        setUpdateStatus('latest')
+      })
     }
     if (isElectron && window.electronAPI?.onUpdateDownloading) {
       window.electronAPI.onUpdateDownloading((_, payload) => {
@@ -83,9 +94,16 @@ export default function SettingsView() {
     setUpdateError(null)
     try {
       const result = await window.electronAPI.checkForUpdates()
-      if (result.status === 'dev') setUpdateStatus('dev')
-      else if (result.updateInfo && result.updateInfo.version !== result.version) setUpdateStatus('available')
-      else setUpdateStatus('latest')
+      if (result.status === 'dev') {
+        setUpdateInfo(null)
+        setUpdateStatus('dev')
+      } else if (result.updateInfo && result.updateInfo.version !== result.version) {
+        setUpdateInfo(result.updateInfo)
+        setUpdateStatus('available')
+      } else {
+        setUpdateInfo(null)
+        setUpdateStatus('latest')
+      }
     } catch { setUpdateStatus('error') }
   }
 
@@ -335,7 +353,36 @@ export default function SettingsView() {
             </button>
           </div>
           {updateStatus === 'latest' && <div className="flex items-center gap-1.5 text-xs text-green-400 px-1"><Check size={12} /> 已是最新版本</div>}
-          {updateStatus === 'available' && <div className="flex items-center gap-1.5 text-xs text-orange-400 px-1"><RefreshCw size={12} /> 发现新版本，请在弹窗中选择是否更新</div>}
+          {updateStatus === 'available' && (
+            <div className="space-y-2 px-1">
+              <div className="flex items-center gap-1.5 text-xs text-orange-400">
+                <RefreshCw size={12} />
+                {updateInfo?.version ? `发现新版本 v${updateInfo.version}` : '发现新版本'}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setUpdateError(null)
+                    setUpdateStatus('downloading')
+                    window.electronAPI?.downloadUpdate?.()
+                  }}
+                  className="text-xs bg-orange-600 hover:bg-orange-500 text-white px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  立即下载更新
+                </button>
+                {updateInfo?.releaseUrl && (
+                  <a
+                    href={updateInfo.releaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-stone-500 hover:text-stone-300 transition-colors"
+                  >
+                    查看发布页
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
           {updateStatus === 'downloading' && (
             <div className="px-1 space-y-1.5">
               <div className="flex items-center justify-between text-xs">
@@ -347,7 +394,29 @@ export default function SettingsView() {
               </div>
             </div>
           )}
-          {updateStatus === 'downloaded' && <div className="text-xs text-green-400 px-1">更新包已下载完成，请回到右下角更新浮窗执行安装。</div>}
+          {updateStatus === 'downloaded' && (
+            <div className="px-1 space-y-2">
+              <div className="text-xs text-green-400">更新包已下载完成，可以直接安装并重启。</div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.electronAPI?.installUpdate?.()}
+                  className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  安装并重启
+                </button>
+                {updateInfo?.releaseUrl && (
+                  <a
+                    href={updateInfo.releaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-stone-500 hover:text-stone-300 transition-colors"
+                  >
+                    查看发布页
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
           {updateStatus === 'dev' && <div className="text-xs text-stone-600 px-1">当前通过开发模式启动，自动更新不会生效；需要打包后的 App 才能测试更新。</div>}
           {updateStatus === 'error' && <div className="text-xs text-red-400 px-1">{updateError || '检查失败，请检查网络连接'}</div>}
         </div>
