@@ -41,6 +41,11 @@ function Layout() {
       setDownloadPct(0)
       setUpdateError(null)
     }
+    const onNotAvailable = () => {
+      setUpdateInfo(null)
+      setUpdateStatus(null)
+      setDownloadPct(0)
+    }
     const onDownloading = (_, payload) => {
       setUpdateStatus('downloading')
       if (typeof payload?.progress === 'number') setDownloadPct(payload.progress)
@@ -60,6 +65,7 @@ function Layout() {
     }
 
     window.electronAPI.onUpdateAvailable?.(onAvailable)
+    window.electronAPI.onUpdateNotAvailable?.(onNotAvailable)
     window.electronAPI.onUpdateDownloading?.(onDownloading)
     window.electronAPI.onUpdateProgress?.(onProgress)
     window.electronAPI.onUpdateDownloaded?.(onDownloaded)

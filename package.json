@@ -1,6 +1,6 @@
 {
   "name": "taskflow",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",

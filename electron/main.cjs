@@ -193,6 +193,55 @@ function sanitizeReleaseNotes(releaseNotes) {
     : (Array.isArray(releaseNotes) ? releaseNotes.map(r => r.note).join('\n') : '')
 }
 
+function normalizeVersion(version) {
+  return String(version || '')
+    .trim()
+    .replace(/^v/i, '')
+}
+
+function compareVersions(a, b) {
+  const pa = normalizeVersion(a).split('.').map(v => parseInt(v, 10))
+  const pb = normalizeVersion(b).split('.').map(v => parseInt(v, 10))
+  const maxLen = Math.max(pa.length, pb.length)
+  for (let i = 0; i < maxLen; i++) {
+    const av = Number.isFinite(pa[i]) ? pa[i] : 0
+    const bv = Number.isFinite(pb[i]) ? pb[i] : 0
+    if (av > bv) return 1
+    if (av < bv) return -1
+  }
+  return 0
+}
+
+function toValidatedUpdateInfo(info, currentVersion = app.getVersion()) {
+  const remoteVersion = normalizeVersion(info?.version)
+  const current = normalizeVersion(currentVersion)
+  if (!remoteVersion) {
+    return { status: 'invalid_remote_version', updateInfo: null }
+  }
+
+  const cmp = compareVersions(remoteVersion, current)
+  if (cmp <= 0) {
+    console.warn('[Updater] ignoring non-newer version', { remoteVersion, currentVersion: current })
+    return { status: cmp === 0 ? 'latest' : 'invalid_remote_version', updateInfo: null }
+  }
+
+  return {
+    status: 'available',
+    updateInfo: {
+      version: remoteVersion,
+      releaseNotes: sanitizeReleaseNotes(info?.releaseNotes),
+      releaseUrl: buildReleaseUrl(remoteVersion),
+    },
+  }
+}
+
+function resetUpdateState() {
+  updateInfoCache = null
+  downloadedZipPath = null
+  isDownloadingUpdate = false
+  updateProgress = 0
+}
+
 function sendUpdateStatus(channel, payload = {}) {
   mainWindow?.webContents.send(channel, payload)
 }
@@ -319,11 +368,14 @@ app.whenReady().then(() => {
     }, 3000)
 
     autoUpdater.on('update-available', (info) => {
-      updateInfoCache = {
-        version: info.version,
-        releaseNotes: sanitizeReleaseNotes(info.releaseNotes),
-        releaseUrl: buildReleaseUrl(info.version),
+      const validated = toValidatedUpdateInfo(info)
+      if (validated.status !== 'available') {
+        resetUpdateState()
+        lastUpdateError = null
+        sendUpdateStatus('update-not-available', { version: app.getVersion() })
+        return
       }
+      updateInfoCache = validated.updateInfo
       downloadedZipPath = null
       isDownloadingUpdate = false
       updateProgress = 0
@@ -332,10 +384,7 @@ app.whenReady().then(() => {
     })
 
     autoUpdater.on('update-not-available', () => {
-      updateInfoCache = null
-      downloadedZipPath = null
-      isDownloadingUpdate = false
-      updateProgress = 0
+      resetUpdateState()
       sendUpdateStatus('update-not-available', { version: app.getVersion() })
     })
 
@@ -444,13 +493,22 @@ ipcMain.handle('check-for-updates', async () => {
   if (!autoUpdater || !app.isPackaged) return { status: 'dev', version: app.getVersion() }
   try {
     const result = await autoUpdater.checkForUpdates()
+    const validated = toValidatedUpdateInfo(result?.updateInfo, app.getVersion())
+    if (validated.status === 'available') {
+      updateInfoCache = validated.updateInfo
+      lastUpdateError = null
+      return {
+        status: 'available',
+        version: app.getVersion(),
+        updateInfo: validated.updateInfo,
+      }
+    }
+
+    resetUpdateState()
     return {
-      status: 'checked',
+      status: validated.status === 'invalid_remote_version' ? 'invalid_remote_version' : 'latest',
       version: app.getVersion(),
-      updateInfo: result?.updateInfo ? {
-        ...result.updateInfo,
-        releaseUrl: buildReleaseUrl(result.updateInfo.version),
-      } : null,
+      updateInfo: null,
     }
   } catch (e) {
     return { status: 'error', error: e.message }
@@ -460,6 +518,7 @@ ipcMain.handle('check-for-updates', async () => {
 ipcMain.handle('get-update-status', () => ({
   available: !!updateInfoCache,
   version: updateInfoCache?.version || null,
+  updateInfo: updateInfoCache,
   downloading: isDownloadingUpdate,
   downloaded: !!downloadedZipPath,
   progress: updateProgress,
@@ -482,10 +541,13 @@ ipcMain.on('download-update', async () => {
     lastUpdateError = null
     if (!updateInfoCache) {
       const result = await autoUpdater.checkForUpdates()
-      if (!result?.updateInfo || result.updateInfo.version === app.getVersion()) {
+      const validated = toValidatedUpdateInfo(result?.updateInfo, app.getVersion())
+      if (validated.status !== 'available') {
+        resetUpdateState()
         sendUpdateStatus('update-not-available', { version: app.getVersion() })
         return
       }
+      updateInfoCache = validated.updateInfo
     }
 
     isDownloadingUpdate = true

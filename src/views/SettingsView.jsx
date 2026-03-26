@@ -38,8 +38,11 @@ export default function SettingsView() {
     }
     if (isElectron && window.electronAPI?.getUpdateStatus) {
       window.electronAPI.getUpdateStatus().then(status => {
-        if (status?.version) {
-          setUpdateInfo(prev => ({ ...prev, version: status.version, releaseUrl: status.releaseUrl || prev?.releaseUrl }))
+        if (status?.available && status?.updateInfo) {
+          setUpdateInfo(status.updateInfo)
+          setUpdateStatus('available')
+        } else {
+          setUpdateInfo(null)
         }
         if (status?.downloaded) {
           setUpdateStatus('downloaded')
@@ -97,7 +100,7 @@ export default function SettingsView() {
       if (result.status === 'dev') {
         setUpdateInfo(null)
         setUpdateStatus('dev')
-      } else if (result.updateInfo && result.updateInfo.version !== result.version) {
+      } else if (result.status === 'available' && result.updateInfo) {
         setUpdateInfo(result.updateInfo)
         setUpdateStatus('available')
       } else {
