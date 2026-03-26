@@ -26,6 +26,7 @@ export default function SettingsView() {
   const [appVersion, setAppVersion] = useState('1.0.0')
   const [updateStatus, setUpdateStatus] = useState(null)
   const [downloadProgress, setDownloadProgress] = useState(0)
+  const [updateError, setUpdateError] = useState(null)
   const [importMsg, setImportMsg] = useState(null)
 
   const isElectron = !!(window.electronAPI)
@@ -34,14 +35,43 @@ export default function SettingsView() {
     if (isElectron && window.electronAPI?.getAppVersion) {
       window.electronAPI.getAppVersion().then(v => setAppVersion(v)).catch(() => {})
     }
+    if (isElectron && window.electronAPI?.getUpdateStatus) {
+      window.electronAPI.getUpdateStatus().then(status => {
+        if (status?.downloaded) {
+          setUpdateStatus('downloaded')
+          setDownloadProgress(100)
+        } else if (status?.downloading) {
+          setUpdateStatus('downloading')
+          setDownloadProgress(status.progress || 0)
+        }
+      }).catch(() => {})
+    }
     if (isElectron && window.electronAPI?.onUpdateAvailable) {
       window.electronAPI.onUpdateAvailable(() => setUpdateStatus('available'))
     }
+    if (isElectron && window.electronAPI?.onUpdateNotAvailable) {
+      window.electronAPI.onUpdateNotAvailable(() => setUpdateStatus('latest'))
+    }
     if (isElectron && window.electronAPI?.onUpdateDownloading) {
-      window.electronAPI.onUpdateDownloading(() => setUpdateStatus('downloading'))
+      window.electronAPI.onUpdateDownloading((_, payload) => {
+        setUpdateStatus('downloading')
+        if (typeof payload?.progress === 'number') setDownloadProgress(payload.progress)
+      })
     }
     if (isElectron && window.electronAPI?.onUpdateProgress) {
-      window.electronAPI.onUpdateProgress((_, pct) => setDownloadProgress(pct))
+      window.electronAPI.onUpdateProgress((_, payload) => setDownloadProgress(payload?.progress ?? 0))
+    }
+    if (isElectron && window.electronAPI?.onUpdateDownloaded) {
+      window.electronAPI.onUpdateDownloaded(() => {
+        setUpdateStatus('downloaded')
+        setDownloadProgress(100)
+      })
+    }
+    if (isElectron && window.electronAPI?.onUpdateError) {
+      window.electronAPI.onUpdateError((_, payload) => {
+        setUpdateStatus('error')
+        setUpdateError(typeof payload === 'string' ? payload : payload?.message || '下载失败')
+      })
     }
   }, []) // eslint-disable-line
 
@@ -50,6 +80,7 @@ export default function SettingsView() {
       setUpdateStatus('dev'); return
     }
     setUpdateStatus('checking')
+    setUpdateError(null)
     try {
       const result = await window.electronAPI.checkForUpdates()
       if (result.status === 'dev') setUpdateStatus('dev')
@@ -78,9 +109,9 @@ export default function SettingsView() {
   }
 
   function handleExportCSV() {
-    const headers = ['ID', '标题', '状态', '优先级', '截止日期', '截止时间', '标签', '创建时间', '完成时间']
+    const headers = ['ID', '标题', '状态', '优先级', '截止日期', '截止时间', '任务时长(分钟)', '标签', '创建时间', '完成时间']
     const rows = state.todos.map(t => [
-      t.id, t.title, t.status, t.priority, t.dueDate || '', t.dueTime || '',
+      t.id, t.title, t.status, t.priority, t.dueDate || '', t.dueTime || '', t.durationMinutes || '',
       (t.tags || []).join(';'), t.createdAt || '', t.completedAt || '',
     ])
     const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
@@ -272,6 +303,23 @@ export default function SettingsView() {
       {/* About & Updates */}
       <Section title="关于 & 更新" icon={Info}>
         <div className="space-y-3">
+          {/* 重看引导 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-stone-200">新手引导</div>
+              <div className="text-xs text-stone-500 mt-0.5">重新查看功能介绍引导</div>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem('taskflow-onboarded')
+                window.location.reload()
+              }}
+              className="text-xs text-stone-400 hover:text-stone-200 px-3 py-1.5 rounded-lg hover:bg-stone-800 transition-colors border border-stone-700"
+            >
+              重新查看
+            </button>
+          </div>
+
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium text-stone-200">TaskFlow</div>
@@ -299,8 +347,9 @@ export default function SettingsView() {
               </div>
             </div>
           )}
-          {updateStatus === 'dev' && <div className="text-xs text-stone-600 px-1">开发模式，跳过更新检查</div>}
-          {updateStatus === 'error' && <div className="text-xs text-red-400 px-1">检查失败，请检查网络连接</div>}
+          {updateStatus === 'downloaded' && <div className="text-xs text-green-400 px-1">更新包已下载完成，请回到右下角更新浮窗执行安装。</div>}
+          {updateStatus === 'dev' && <div className="text-xs text-stone-600 px-1">当前通过开发模式启动，自动更新不会生效；需要打包后的 App 才能测试更新。</div>}
+          {updateStatus === 'error' && <div className="text-xs text-red-400 px-1">{updateError || '检查失败，请检查网络连接'}</div>}
         </div>
       </Section>
 

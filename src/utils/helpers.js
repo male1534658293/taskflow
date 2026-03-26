@@ -1,3 +1,123 @@
+export const TASK_DURATION_OPTIONS = [
+  { value: null, label: '无时长' },
+  { value: 15, label: '15 分钟' },
+  { value: 30, label: '30 分钟' },
+  { value: 45, label: '45 分钟' },
+  { value: 60, label: '1 小时' },
+  { value: 90, label: '1.5 小时' },
+  { value: 120, label: '2 小时' },
+]
+
+const ZH_DIGIT = {
+  '零': 0, '〇': 0,
+  '一': 1, '二': 2, '两': 2, '俩': 2, '三': 3, '四': 4,
+  '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+}
+
+function parseChineseNumber(token) {
+  if (!token) return null
+  if (/^\d+$/.test(token)) return parseInt(token, 10)
+
+  const normalized = token.replace(/[俩两]/g, '二')
+  if (normalized === '十') return 10
+  if (normalized.includes('十')) {
+    const [tenPart, onePart] = normalized.split('十')
+    const tens = tenPart ? (ZH_DIGIT[tenPart] ?? parseInt(tenPart, 10)) : 1
+    const ones = onePart ? parseChineseNumber(onePart) : 0
+    if (Number.isNaN(tens) || Number.isNaN(ones)) return null
+    return tens * 10 + ones
+  }
+
+  const digits = [...normalized].map(ch => {
+    if (ZH_DIGIT[ch] !== undefined) return String(ZH_DIGIT[ch])
+    if (/\d/.test(ch)) return ch
+    return ''
+  }).join('')
+
+  return digits ? parseInt(digits, 10) : null
+}
+
+function applyMeridiem(hour, meridiem) {
+  if (!meridiem) return hour
+  if (/上午/.test(meridiem)) return hour === 12 ? 0 : hour
+  if (/中午/.test(meridiem)) return hour >= 11 ? hour : hour + 12
+  if (/(下午|晚上|傍晚)/.test(meridiem)) return hour < 12 ? hour + 12 : hour
+  return hour
+}
+
+function applyImplicitWorkHour(hour, explicitMeridiem) {
+  if (explicitMeridiem) return hour
+  if (hour >= 1 && hour <= 7) return hour + 12
+  return hour
+}
+
+function parseTimeToken(title) {
+  const hhmmMatch = title.match(/\b(\d{1,2}):(\d{2})\b/)
+  if (hhmmMatch) {
+    const rawHour = parseInt(hhmmMatch[1], 10)
+    const hour = applyImplicitWorkHour(rawHour, false)
+    return {
+      dueTime: `${String(hour).padStart(2, '0')}:${hhmmMatch[2]}`,
+      raw: hhmmMatch[0],
+    }
+  }
+
+  const zhTimeMatch = title.match(/(上午|中午|下午|晚上|傍晚)?\s*([零〇一二两俩三四五六七八九十\d]{1,3})\s*点(?:(半)|\s*([零〇一二两俩三四五六七八九十\d]{1,3})\s*分?)?/)
+  if (zhTimeMatch) {
+    let hour = parseChineseNumber(zhTimeMatch[2])
+    if (hour !== null && hour >= 0 && hour <= 23) {
+      hour = applyMeridiem(hour, zhTimeMatch[1])
+      hour = applyImplicitWorkHour(hour, !!zhTimeMatch[1])
+      const minute = zhTimeMatch[3] ? 30 : (parseChineseNumber(zhTimeMatch[4]) ?? 0)
+      if (minute >= 0 && minute <= 59) {
+        return {
+          dueTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+          raw: zhTimeMatch[0],
+        }
+      }
+    }
+  }
+
+  const ampmMatch = title.match(/\b(\d{1,2})(am|pm)\b/i)
+  if (ampmMatch) {
+    let hour = parseInt(ampmMatch[1], 10)
+    const ampm = ampmMatch[2].toLowerCase()
+    if (ampm === 'pm' && hour !== 12) hour += 12
+    if (ampm === 'am' && hour === 12) hour = 0
+    return {
+      dueTime: `${String(hour).padStart(2, '0')}:00`,
+      raw: ampmMatch[0],
+    }
+  }
+
+  return null
+}
+
+function parseDurationToken(title) {
+  const hourMinuteMatch = title.match(/(\d+(?:\.\d+)?)\s*(小时|小時|hours?|hrs?|hr|h)(?![A-Za-z])/i)
+  if (hourMinuteMatch) {
+    return {
+      durationMinutes: Math.round(parseFloat(hourMinuteMatch[1]) * 60),
+      raw: hourMinuteMatch[0],
+    }
+  }
+
+  if (/半小时|半個小时|半小時/i.test(title)) {
+    const raw = title.match(/半小时|半個小时|半小時/i)?.[0]
+    return { durationMinutes: 30, raw }
+  }
+
+  const minuteMatch = title.match(/(\d+)\s*(分钟|分鐘|minutes?|mins?|min)(?![A-Za-z])/i)
+  if (minuteMatch) {
+    return {
+      durationMinutes: parseInt(minuteMatch[1], 10),
+      raw: minuteMatch[0],
+    }
+  }
+
+  return null
+}
+
 // NLP Parser
 export function parseNLP(input) {
   let title = input.trim()
@@ -6,6 +126,7 @@ export function parseNLP(input) {
   let dueDate = null
   let dueTime = null
   let recurrence = null
+  let durationMinutes = null
 
   // Parse priority: p1, p2, p3, p4
   const priorityMatch = title.match(/\bp([1-4])\b/i)
@@ -21,13 +142,16 @@ export function parseNLP(input) {
     title = title.replace(/[#@][\u4e00-\u9fa5\w]+/g, '').trim()
   }
 
-  // Parse time: HH:mm
-  const timeMatch = title.match(/\b(\d{1,2}):(\d{2})\b/)
-  if (timeMatch) {
-    const h = timeMatch[1].padStart(2, '0')
-    const m = timeMatch[2]
-    dueTime = `${h}:${m}`
-    title = title.replace(timeMatch[0], '').trim()
+  const timeToken = parseTimeToken(title)
+  if (timeToken) {
+    dueTime = timeToken.dueTime
+    title = title.replace(timeToken.raw, '').trim()
+  }
+
+  const durationToken = parseDurationToken(title)
+  if (durationToken) {
+    durationMinutes = durationToken.durationMinutes
+    title = title.replace(durationToken.raw, '').trim()
   }
 
   // Parse recurrence
@@ -116,74 +240,10 @@ export function parseNLP(input) {
     }
   }
 
-  // 3pm / 5am style
-  const ampmMatch = title.match(/\b(\d{1,2})(am|pm)\b/i)
-  if (ampmMatch && !dueTime) {
-    let h = parseInt(ampmMatch[1])
-    const ampm = ampmMatch[2].toLowerCase()
-    if (ampm === 'pm' && h !== 12) h += 12
-    if (ampm === 'am' && h === 12) h = 0
-    dueTime = `${String(h).padStart(2, '0')}:00`
-    title = title.replace(ampmMatch[0], '').trim()
-  }
-
-  // 中文时间解析：九点三十 / 9点30 / 下午两点半 / 上午十点
-  if (!dueTime) {
-    const CN_NUM = { 零:0, 一:1, 二:2, 三:3, 四:4, 五:5, 六:6, 七:7, 八:8, 九:9, 十:10, 两:2 }
-    function parseCNNum(s) {
-      if (!s || !s.length) return 0
-      const n = parseInt(s, 10); if (!isNaN(n)) return n
-      let result = 0, cur = 0
-      for (const ch of s) {
-        const v = CN_NUM[ch]; if (v === undefined) return null
-        if (v === 10) { result += (cur || 1) * 10; cur = 0 } else cur = v
-      }
-      return result + cur
-    }
-    let forcePM = false, forceAM = false
-    const periodM = title.match(/(下午|傍晚|晚上|夜里|午后|中午|上午|早上|早晨|凌晨)/)
-    if (periodM) {
-      if (/下午|傍晚|晚上|夜里|午后|中午/.test(periodM[1])) forcePM = true
-      else forceAM = true
-      title = title.replace(periodM[0], '')
-    }
-    // 九点半
-    const halfM = title.match(/([零一二三四五六七八九十两\d]+)[点时]半/)
-    if (halfM) {
-      const h = parseCNNum(halfM[1])
-      if (h !== null) {
-        let hours = h
-        if (forcePM && hours < 12) hours += 12
-        if (forceAM && hours === 12) hours = 0
-        if (!forcePM && !forceAM && hours >= 1 && hours <= 7) hours += 12
-        dueTime = `${String(hours).padStart(2, '0')}:30`
-        if (!dueDate) dueDate = toLocalDateStr(todayDate)
-        title = title.replace(halfM[0], '')
-      }
-    }
-    // 九点三十 / 9点30 / 九点
-    if (!dueTime) {
-      const timeM = title.match(/([零一二三四五六七八九十两\d]+)[点时]([零一二三四五六七八九十\d]*)[分]?/)
-      if (timeM) {
-        const h = parseCNNum(timeM[1])
-        const m = timeM[2] ? (parseCNNum(timeM[2]) || 0) : 0
-        if (h !== null) {
-          let hours = h
-          if (forcePM && hours < 12) hours += 12
-          if (forceAM && hours === 12) hours = 0
-          if (!forcePM && !forceAM && hours >= 1 && hours <= 7) hours += 12
-          dueTime = `${String(hours).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-          if (!dueDate) dueDate = toLocalDateStr(todayDate)
-          title = title.replace(timeM[0], '')
-        }
-      }
-    }
-  }
-
   // Clean up extra spaces
   title = title.replace(/\s+/g, ' ').trim()
 
-  return { title, priority, tags, dueDate, dueTime, recurrence }
+  return { title, priority, tags, dueDate, dueTime, recurrence, durationMinutes }
 }
 
 // Local date string (YYYY-MM-DD) using system timezone — avoids UTC shift
@@ -317,10 +377,18 @@ export function isTomorrow(dateStr) {
 export function formatDueDisplay(task) {
   if (!task.dueDate) return ''
   const timePart = task.dueTime ? ` ${task.dueTime}` : ''
-  if (isToday(task.dueDate)) return `今天${timePart}`
-  if (isTomorrow(task.dueDate)) return `明天${timePart}`
+  const durationPart = task.durationMinutes ? ` · ${formatDurationMinutes(task.durationMinutes)}` : ''
+  if (isToday(task.dueDate)) return `今天${timePart}${durationPart}`
+  if (isTomorrow(task.dueDate)) return `明天${timePart}${durationPart}`
   const d = new Date(task.dueDate + 'T00:00:00')
-  return `${d.getMonth() + 1}月${d.getDate()}日${timePart}`
+  return `${d.getMonth() + 1}月${d.getDate()}日${timePart}${durationPart}`
+}
+
+export function formatDurationMinutes(minutes) {
+  if (!minutes) return ''
+  if (minutes % 60 === 0) return `${minutes / 60} 小时`
+  if (minutes > 60 && minutes % 30 === 0) return `${minutes / 60} 小时`
+  return `${minutes} 分钟`
 }
 
 export function formatRelativeTime(isoStr) {

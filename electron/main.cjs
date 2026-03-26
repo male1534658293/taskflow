@@ -1,6 +1,8 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, screen, Menu, Tray, nativeImage, shell, Notification, dialog } = require('electron')
 const path = require('path')
 const http = require('http')
+const fs = require('fs')
+const os = require('os')
 
 // ─── 自动更新（electron-updater + zip 格式，无需代码签名）──────────────────────
 let autoUpdater = null
@@ -16,9 +18,17 @@ try {
 let mainWindow = null
 let floatWindow = null
 let tray = null
+let floatClickThrough = false
+const UPDATE_OWNER = 'male1534658293'
+const UPDATE_REPO = 'taskflow'
 
 // ─── 工作日提醒调度 ───────────────────────────────────────────────────────────
 let reminderTimer = null
+let downloadedZipPath = null
+let updateInfoCache = null
+let isDownloadingUpdate = false
+let lastUpdateError = null
+let updateProgress = 0
 
 // 中国法定节假日（与前端共享同一份数据，main 进程独立维护）
 const CN_HOLIDAYS = new Set([
@@ -131,6 +141,105 @@ function getDistPath(file = 'index.html') {
   return path.join(__dirname, '../dist', file)
 }
 
+function getGoogleOAuthConfigPath() {
+  return path.join(app.getPath('userData'), 'google-oauth.json')
+}
+
+function readGoogleOAuthConfig() {
+  try {
+    const raw = fs.readFileSync(getGoogleOAuthConfigPath(), 'utf8')
+    return JSON.parse(raw)
+  } catch {
+    return {}
+  }
+}
+
+function resolveGoogleOAuthCredentials(override = {}) {
+  const fileConfig = readGoogleOAuthConfig()
+  const clientId = override.clientId || fileConfig.clientId || process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || ''
+  const clientSecret = override.clientSecret || fileConfig.clientSecret || process.env.GOOGLE_CLIENT_SECRET || process.env.VITE_GOOGLE_CLIENT_SECRET || ''
+
+  let source = 'missing'
+  if (override.clientId && override.clientSecret) source = 'request'
+  else if (fileConfig.clientId || fileConfig.clientSecret) source = 'userData'
+  else if (process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_SECRET || process.env.VITE_GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_SECRET) source = 'env'
+
+  return {
+    clientId,
+    clientSecret,
+    configured: !!(clientId && clientSecret),
+    source,
+  }
+}
+
+function writeGoogleOAuthConfig({ clientId, clientSecret }) {
+  const filePath = getGoogleOAuthConfigPath()
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, JSON.stringify({ clientId, clientSecret }, null, 2), 'utf8')
+}
+
+function clearGoogleOAuthConfig() {
+  try {
+    fs.unlinkSync(getGoogleOAuthConfigPath())
+  } catch {}
+}
+
+function buildReleaseUrl(version) {
+  return version ? `https://github.com/${UPDATE_OWNER}/${UPDATE_REPO}/releases/tag/v${version}` : `https://github.com/${UPDATE_OWNER}/${UPDATE_REPO}/releases`
+}
+
+function sanitizeReleaseNotes(releaseNotes) {
+  return typeof releaseNotes === 'string'
+    ? releaseNotes.replace(/<[^>]+>/g, '').trim()
+    : (Array.isArray(releaseNotes) ? releaseNotes.map(r => r.note).join('\n') : '')
+}
+
+function sendUpdateStatus(channel, payload = {}) {
+  mainWindow?.webContents.send(channel, payload)
+}
+
+function pickDownloadedZipPath(value) {
+  if (!value) return null
+  if (typeof value === 'string') return value.endsWith('.zip') ? value : null
+  if (Array.isArray(value)) return value.find(p => typeof p === 'string' && p.endsWith('.zip')) || value.find(p => typeof p === 'string') || null
+  if (typeof value === 'object') {
+    if (typeof value.downloadedFile === 'string') return value.downloadedFile
+    if (Array.isArray(value.files)) return pickDownloadedZipPath(value.files.map(file => file.url || file.path || file.name).filter(Boolean))
+  }
+  return null
+}
+
+async function refreshGoogleToken({ refreshToken, clientId, clientSecret }) {
+  const creds = resolveGoogleOAuthCredentials({ clientId, clientSecret })
+  if (!creds.configured) return { success: false, error: 'missing_credentials' }
+  if (!refreshToken) return { success: false, error: 'missing_refresh_token' }
+
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        refresh_token: refreshToken,
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+        grant_type: 'refresh_token',
+      }).toString(),
+    })
+    const tokenData = await tokenRes.json()
+
+    if (!tokenRes.ok || !tokenData.access_token) {
+      return {
+        success: false,
+        error: tokenData.error_description || tokenData.error || 'refresh_failed',
+      }
+    }
+
+    return { success: true, ...tokenData }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -184,6 +293,7 @@ function createFloatWindow() {
   })
 
   floatWindow.loadFile(getDistPath(), { hash: 'float' })
+  floatWindow.setIgnoreMouseEvents(floatClickThrough, { forward: true })
 
   // Save position on move
   floatWindow.on('moved', () => {
@@ -224,28 +334,54 @@ app.whenReady().then(() => {
   if (autoUpdater && app.isPackaged) {
     setTimeout(() => {
       autoUpdater.checkForUpdates().catch(err => {
-        mainWindow?.webContents.send('update-error', err?.message || 'check failed')
+        lastUpdateError = err?.message || 'check failed'
+        sendUpdateStatus('update-error', { message: lastUpdateError })
       })
     }, 3000)
 
     autoUpdater.on('update-available', (info) => {
-      const releaseNotes = typeof info.releaseNotes === 'string'
-        ? info.releaseNotes.replace(/<[^>]+>/g, '').trim()
-        : (Array.isArray(info.releaseNotes) ? info.releaseNotes.map(r => r.note).join('\n') : '')
-      mainWindow?.webContents.send('update-available', { version: info.version, releaseNotes })
+      updateInfoCache = {
+        version: info.version,
+        releaseNotes: sanitizeReleaseNotes(info.releaseNotes),
+        releaseUrl: buildReleaseUrl(info.version),
+      }
+      downloadedZipPath = null
+      isDownloadingUpdate = false
+      updateProgress = 0
+      lastUpdateError = null
+      sendUpdateStatus('update-available', updateInfoCache)
+    })
+
+    autoUpdater.on('update-not-available', () => {
+      updateInfoCache = null
+      downloadedZipPath = null
+      isDownloadingUpdate = false
+      updateProgress = 0
+      sendUpdateStatus('update-not-available', { version: app.getVersion() })
     })
 
     autoUpdater.on('download-progress', (progress) => {
-      mainWindow?.webContents.send('update-progress', Math.round(progress.percent))
+      isDownloadingUpdate = true
+      updateProgress = Math.round(progress.percent)
+      sendUpdateStatus('update-downloading', { progress: updateProgress })
+      sendUpdateStatus('update-progress', { progress: updateProgress })
     })
 
-    // 下载完成 → 通知渲染进程，用户确认后静默重启安装
-    autoUpdater.on('update-downloaded', () => {
-      mainWindow?.webContents.send('update-downloaded', {})
+    // 下载完成 → 保存路径，通知渲染进程
+    autoUpdater.on('update-downloaded', (info) => {
+      downloadedZipPath = pickDownloadedZipPath(info) || downloadedZipPath
+      isDownloadingUpdate = false
+      updateProgress = 100
+      sendUpdateStatus('update-downloaded', { downloaded: true, zipPathFound: !!downloadedZipPath })
     })
 
     autoUpdater.on('error', (err) => {
-      mainWindow?.webContents.send('update-error', err?.message || 'unknown')
+      isDownloadingUpdate = false
+      lastUpdateError = err?.message || 'unknown'
+      sendUpdateStatus('update-error', {
+        message: lastUpdateError,
+        releaseUrl: buildReleaseUrl(updateInfoCache?.version),
+      })
     })
   }
 
@@ -259,6 +395,13 @@ app.whenReady().then(() => {
       floatWindow.show()
       floatWindow.focus()
     }
+  })
+
+  globalShortcut.register('CommandOrControl+Shift+X', () => {
+    if (!floatWindow) return
+    floatClickThrough = !floatClickThrough
+    floatWindow.setIgnoreMouseEvents(floatClickThrough, { forward: true })
+    floatWindow.webContents.send('float-click-through-changed', { enabled: floatClickThrough })
   })
 
   app.on('activate', () => {
@@ -296,6 +439,14 @@ ipcMain.on('float-set-always-on-top', (e, { onTop }) => {
   floatWindow?.setAlwaysOnTop(onTop)
 })
 
+ipcMain.on('float-set-click-through', (e, { enabled }) => {
+  floatClickThrough = !!enabled
+  if (floatWindow) {
+    floatWindow.setIgnoreMouseEvents(floatClickThrough, { forward: true })
+    floatWindow.webContents.send('float-click-through-changed', { enabled: floatClickThrough })
+  }
+})
+
 ipcMain.on('float-resize', (e, { w, h }) => {
   floatWindow?.setSize(w, h)
 })
@@ -314,27 +465,144 @@ ipcMain.handle('check-for-updates', async () => {
   if (!autoUpdater || !app.isPackaged) return { status: 'dev', version: app.getVersion() }
   try {
     const result = await autoUpdater.checkForUpdates()
-    return { status: 'checked', version: app.getVersion(), updateInfo: result?.updateInfo || null }
+    return {
+      status: 'checked',
+      version: app.getVersion(),
+      updateInfo: result?.updateInfo ? {
+        ...result.updateInfo,
+        releaseUrl: buildReleaseUrl(result.updateInfo.version),
+      } : null,
+    }
   } catch (e) {
     return { status: 'error', error: e.message }
   }
 })
 
-// 开始下载
-ipcMain.on('download-update', () => {
-  if (!autoUpdater) return
-  mainWindow?.webContents.send('update-downloading')
-  autoUpdater.downloadUpdate().catch(err => {
-    mainWindow?.webContents.send('update-error', err?.message)
-  })
+ipcMain.handle('get-update-status', () => ({
+  available: !!updateInfoCache,
+  version: updateInfoCache?.version || null,
+  downloading: isDownloadingUpdate,
+  downloaded: !!downloadedZipPath,
+  progress: updateProgress,
+  error: lastUpdateError,
+  releaseUrl: buildReleaseUrl(updateInfoCache?.version),
+}))
+
+// 开始下载，保存路径供手动安装用
+ipcMain.on('download-update', async () => {
+  if (!autoUpdater || !app.isPackaged) {
+    sendUpdateStatus('update-error', { message: '当前环境不支持自动更新' })
+    return
+  }
+  if (isDownloadingUpdate) {
+    sendUpdateStatus('update-downloading', { progress: updateProgress })
+    return
+  }
+
+  try {
+    lastUpdateError = null
+    if (!updateInfoCache) {
+      const result = await autoUpdater.checkForUpdates()
+      if (!result?.updateInfo || result.updateInfo.version === app.getVersion()) {
+        sendUpdateStatus('update-not-available', { version: app.getVersion() })
+        return
+      }
+    }
+
+    isDownloadingUpdate = true
+    updateProgress = 0
+    sendUpdateStatus('update-downloading', { progress: 0 })
+
+    const paths = await autoUpdater.downloadUpdate()
+    downloadedZipPath = pickDownloadedZipPath(paths) || downloadedZipPath
+
+    if (!downloadedZipPath) {
+      isDownloadingUpdate = false
+      updateProgress = 0
+      lastUpdateError = '更新已下载，但未定位到安装包，请从发布页手动下载'
+      sendUpdateStatus('update-error', {
+        message: lastUpdateError,
+        releaseUrl: buildReleaseUrl(updateInfoCache?.version),
+      })
+    }
+  } catch (err) {
+    isDownloadingUpdate = false
+    lastUpdateError = err?.message || 'download failed'
+    sendUpdateStatus('update-error', {
+      message: lastUpdateError,
+      releaseUrl: buildReleaseUrl(updateInfoCache?.version),
+    })
+  }
 })
 
-// 下载完成后用户点击"立即安装" → 静默重启
+// 下载完成后用户点击"立即安装" → 手动解压替换（绕过 ShipIt 代码签名验证）
 ipcMain.on('install-update', () => {
-  if (autoUpdater) autoUpdater.quitAndInstall(false, true)
+  if (!downloadedZipPath) {
+    mainWindow?.webContents.send('update-error', `install-update: no zip path (autoUpdater=${!!autoUpdater})`)
+    return
+  }
+  const appPath = app.getPath('exe').split('/Contents/MacOS/')[0]
+  const ts = Date.now()
+  const tmpDir = `/tmp/taskflow_update_${ts}`
+  const logFile = `/tmp/taskflow_install_${ts}.log`
+  const script = `#!/bin/bash
+exec > "${logFile}" 2>&1
+echo "zip: ${downloadedZipPath}"
+echo "app: ${appPath}"
+sleep 1
+unzip -o "${downloadedZipPath}" -d "${tmpDir}"
+APP=$(find "${tmpDir}" -maxdepth 1 -name "*.app" | head -1)
+echo "found app: $APP"
+if [ -n "$APP" ]; then
+  rm -rf "${appPath}"
+  cp -Rp "$APP" "${appPath}"
+  xattr -cr "${appPath}" 2>/dev/null
+  open "${appPath}"
+fi
+rm -rf "${tmpDir}"
+`
+  const scriptPath = `/tmp/taskflow_install_${ts}.sh`
+  require('fs').writeFileSync(scriptPath, script, { mode: 0o755 })
+  require('child_process').spawn('/bin/bash', [scriptPath], { detached: true, stdio: 'ignore' }).unref()
+  app.quit()
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
+
+ipcMain.handle('google-oauth-status', () => {
+  const creds = resolveGoogleOAuthCredentials()
+  return {
+    configured: creds.configured,
+    source: creds.source,
+    clientIdPreview: creds.clientId ? `${creds.clientId.slice(0, 12)}...` : '',
+  }
+})
+
+ipcMain.handle('google-oauth-save-config', (_, params = {}) => {
+  const clientId = (params.clientId || '').trim()
+  const clientSecret = (params.clientSecret || '').trim()
+  if (!clientId || !clientSecret) {
+    return { success: false, error: 'missing_credentials' }
+  }
+
+  try {
+    writeGoogleOAuthConfig({ clientId, clientSecret })
+    const creds = resolveGoogleOAuthCredentials()
+    return {
+      success: true,
+      configured: creds.configured,
+      source: creds.source,
+      clientIdPreview: creds.clientId ? `${creds.clientId.slice(0, 12)}...` : '',
+    }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+ipcMain.handle('google-oauth-clear-config', () => {
+  clearGoogleOAuthConfig()
+  return { success: true }
+})
 
 // ─── 提醒 IPC ────────────────────────────────────────────────────────────────
 let currentTodosJson = '[]'
@@ -355,8 +623,15 @@ ipcMain.on('reminder-update-todos', (e, { todosJson }) => {
 
 // ─── Google OAuth loopback flow ──────────────────────────────────────────────
 // Desktop app type: Google auto-allows http://127.0.0.1 on any port
-ipcMain.handle('google-oauth-start', (event, { clientId, clientSecret }) => {
+ipcMain.handle('google-oauth-start', (event, params = {}) => {
   return new Promise((resolve) => {
+    const { clientId, clientSecret } = params
+    const creds = resolveGoogleOAuthCredentials({ clientId, clientSecret })
+    if (!creds.configured) {
+      resolve({ success: false, error: 'missing_credentials' })
+      return
+    }
+
     const server = http.createServer()
 
     server.on('error', (err) => {
@@ -368,7 +643,7 @@ ipcMain.handle('google-oauth-start', (event, { clientId, clientSecret }) => {
       const redirectUri = `http://127.0.0.1:${port}/callback`
 
       const params = new URLSearchParams({
-        client_id: clientId,
+        client_id: creds.clientId,
         redirect_uri: redirectUri,
         response_type: 'code',
         scope: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.email',
@@ -415,8 +690,8 @@ ipcMain.handle('google-oauth-start', (event, { clientId, clientSecret }) => {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({
               code,
-              client_id: clientId,
-              client_secret: clientSecret,
+              client_id: creds.clientId,
+              client_secret: creds.clientSecret,
               redirect_uri: redirectUri,
               grant_type: 'authorization_code',
             }).toString(),
@@ -446,4 +721,32 @@ ipcMain.handle('google-oauth-start', (event, { clientId, clientSecret }) => {
       })
     })
   })
+})
+
+ipcMain.handle('google-oauth-refresh', async (_, params) => {
+  return refreshGoogleToken(params || {})
+})
+
+// ─── iCloud Drive 同步 ────────────────────────────────────────────────────────
+const ICLOUD_DIR = path.join(os.homedir(), 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'TaskFlow')
+
+ipcMain.handle('icloud-save', (_, data) => {
+  try {
+    if (!fs.existsSync(ICLOUD_DIR)) fs.mkdirSync(ICLOUD_DIR, { recursive: true })
+    fs.writeFileSync(path.join(ICLOUD_DIR, 'data.json'), JSON.stringify(data), 'utf8')
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+ipcMain.handle('icloud-load', () => {
+  try {
+    const filePath = path.join(ICLOUD_DIR, 'data.json')
+    if (!fs.existsSync(filePath)) return { success: true, data: null }
+    const raw = fs.readFileSync(filePath, 'utf8')
+    return { success: true, data: JSON.parse(raw) }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
 })

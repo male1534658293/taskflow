@@ -18,13 +18,33 @@ const ACHIEVEMENTS = [
   { id: 'subtask_master', icon: '📋', label: '细节控', desc: '完成10个子任务', condition: (todos) => todos.flatMap(t => t.subtasks || []).filter(s => s.done).length >= 10, total: 10, getValue: (todos) => todos.flatMap(t => t.subtasks || []).filter(s => s.done).length },
   { id: 'night_owl', icon: '🦉', label: '夜猫子', desc: '晚上10点后完成任务', condition: (todos) => todos.some(t => t.completedAt && new Date(t.completedAt).getHours() >= 22), total: null, getValue: () => null },
   { id: 'early_bird', icon: '🐦', label: '早起鸟', desc: '早上6点前完成任务', condition: (todos) => todos.some(t => t.completedAt && new Date(t.completedAt).getHours() < 6), total: null, getValue: () => null },
+  // 学习成就
+  { id: 'first_card', icon: '📖', label: '知识启蒙', desc: '创建第一张知识卡片', condition: (todos, user, learning) => learning.cards.length >= 1, total: 1, getValue: (todos, user, learning) => learning.cards.length },
+  { id: 'cards_10', icon: '📚', label: '知识积累', desc: '创建10张知识卡片', condition: (todos, user, learning) => learning.cards.length >= 10, total: 10, getValue: (todos, user, learning) => learning.cards.length },
+  { id: 'mastered_5', icon: '🧠', label: '记忆达人', desc: '掌握5张知识卡片（间隔≥21天）', condition: (todos, user, learning) => learning.cards.filter(c => c.interval >= 21).length >= 5, total: 5, getValue: (todos, user, learning) => learning.cards.filter(c => c.interval >= 21).length },
+  { id: 'review_streak_3', icon: '🔥', label: '学习习惯', desc: '连续复习3天', condition: (todos, user, learning) => learning.reviewStreak >= 3, total: 3, getValue: (todos, user, learning) => learning.reviewStreak },
+  { id: 'review_streak_7', icon: '💡', label: '学习达人', desc: '连续复习7天', condition: (todos, user, learning) => learning.reviewStreak >= 7, total: 7, getValue: (todos, user, learning) => learning.reviewStreak },
+  { id: 'review_streak_14', icon: '🌙', label: '两周坚持', desc: '连续复习14天', condition: (todos, user, learning) => learning.reviewStreak >= 14, total: 14, getValue: (todos, user, learning) => learning.reviewStreak },
+  { id: 'review_streak_30', icon: '🌟', label: '学习大师', desc: '连续复习30天', condition: (todos, user, learning) => learning.reviewStreak >= 30, total: 30, getValue: (todos, user, learning) => learning.reviewStreak },
+  { id: 'review_total_100', icon: '🎓', label: '复习百次', desc: '累计复习100次卡片', condition: (todos, user, learning) => learning.cards.reduce((s, c) => s + c.repetitions, 0) >= 100, total: 100, getValue: (todos, user, learning) => learning.cards.reduce((s, c) => s + c.repetitions, 0) },
+  { id: 'multi_deck', icon: '🗂️', label: '卡包收藏家', desc: '创建3个及以上卡包', condition: (todos, user, learning) => new Set(learning.cards.map(c => c.deck).filter(Boolean)).size >= 3, total: 3, getValue: (todos, user, learning) => new Set(learning.cards.map(c => c.deck).filter(Boolean)).size },
+  { id: 'multi_tag_learner', icon: '🏷️', label: '博学多闻', desc: '知识卡片涵盖5个以上不同标签', condition: (todos, user, learning) => new Set(learning.cards.flatMap(c => c.tags)).size >= 5, total: 5, getValue: (todos, user, learning) => new Set(learning.cards.flatMap(c => c.tags)).size },
+  { id: 'pomodoro_50', icon: '🍅', label: '番茄大师', desc: '累计完成50个番茄钟', condition: (todos) => todos.reduce((s, t) => s + (t.pomodoroCount || 0), 0) >= 50, total: 50, getValue: (todos) => todos.reduce((s, t) => s + (t.pomodoroCount || 0), 0) },
+  { id: 'bulk_day', icon: '⚡', label: '效率爆发', desc: '单日完成10个任务', condition: (todos) => {
+    const counts = {}
+    todos.filter(t => t.completedAt).forEach(t => {
+      const day = t.completedAt.slice(0, 10)
+      counts[day] = (counts[day] || 0) + 1
+    })
+    return Object.values(counts).some(v => v >= 10)
+  }, total: null, getValue: () => null },
 ]
 
 export default function AchievementsView() {
   const { state } = useApp()
-  const { todos, user } = state
+  const { todos, user, learning } = state
 
-  const unlockedCount = ACHIEVEMENTS.filter(a => a.condition(todos, user)).length
+  const unlockedCount = ACHIEVEMENTS.filter(a => a.condition(todos, user, learning)).length
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -52,8 +72,8 @@ export default function AchievementsView() {
       {/* Achievement grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {ACHIEVEMENTS.map(achievement => {
-          const unlocked = achievement.condition(todos, user)
-          const currentValue = achievement.getValue(todos, user)
+          const unlocked = achievement.condition(todos, user, learning)
+          const currentValue = achievement.getValue(todos, user, learning)
           const hasProgress = achievement.total !== null && currentValue !== null
           const progress = hasProgress ? Math.min(currentValue, achievement.total) : 0
           const progressPct = hasProgress ? (progress / achievement.total) * 100 : 0

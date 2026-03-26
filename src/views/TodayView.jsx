@@ -1,15 +1,17 @@
 import React, { useState } from 'react'
-import { Target, ChevronDown, ChevronRight, X, Trophy } from 'lucide-react'
+import { Target, ChevronDown, ChevronRight, X, AlertCircle, Lightbulb, BookOpen, Trash2 } from 'lucide-react'
 import { useApp } from '../store/AppContext.jsx'
 import TaskCard from '../components/TaskCard.jsx'
 import QuickFilters, { applyFilters } from '../components/QuickFilters.jsx'
 import { isTomorrow, shouldShowOnDate, toLocalDateStr } from '../utils/helpers.js'
+import { isDueToday } from '../utils/srs.js'
 
 export default function TodayView() {
   const { state, dispatch } = useApp()
-  const { todos, focus, filters } = state
+  const { todos, focus, filters, learning } = state
   const [showCompleted, setShowCompleted] = useState(true)
   const [showOtherTasks, setShowOtherTasks] = useState(false)
+  const [showSuggested, setShowSuggested] = useState(true)
 
   const todayDate = new Date()
   const todayStr = toLocalDateStr(todayDate)
@@ -50,6 +52,25 @@ export default function TodayView() {
     if (b.dueTime) return 1
     return 0
   })
+
+  // 逾期任务：dueDate < today，未完成，非重复
+  const overdueTasks = todos.filter(t =>
+    !t.recurrence && t.dueDate && t.dueDate < todayStr && t.status !== 'completed'
+  )
+
+  // 智能推荐：P1任务 且 没有在今天显示的（不重复、无截止日期或截止日期>今天）
+  const todayIds = new Set(todayTodos.map(t => t.id))
+  const overdueIds = new Set(overdueTasks.map(t => t.id))
+  const suggestedTasks = todos.filter(t =>
+    !todayIds.has(t.id) &&
+    !overdueIds.has(t.id) &&
+    t.status !== 'completed' &&
+    (t.priority === 'P1' || t.priority === 'P2') &&
+    !t.recurrence
+  ).slice(0, 3)
+
+  // 今日待复习卡片
+  const dueReviews = learning.cards.filter(isDueToday).length
 
   // Focus mode
   const focusTasks = focus.selectedIds.map(id => todos.find(t => t.id === id)).filter(Boolean)
@@ -147,19 +168,95 @@ export default function TodayView() {
           <h1 className="text-xl font-bold text-stone-100">今天</h1>
           <p className="text-sm text-stone-500 mt-0.5">{dateLabel}</p>
         </div>
-        <button
-          onClick={() => dispatch({ type: 'OPEN_FOCUS_SELECTION' })}
-          className="flex items-center gap-2 text-sm font-medium text-orange-400 hover:text-orange-300 border border-orange-500/40 hover:border-orange-500/80 px-3 py-1.5 rounded-xl transition-all hover:bg-orange-500/5"
-        >
-          <Target size={15} />
-          设置焦点
-        </button>
+        <div className="flex items-center gap-2">
+          {sortedPending.filter(t => t.dueDate === todayStr).length > 0 && (
+            <button
+              onClick={() => {
+                if (window.confirm('将今天所有待办任务延期到明天？')) {
+                  dispatch({ type: 'CLEAR_TODAY' })
+                }
+              }}
+              className="flex items-center gap-1.5 text-sm text-stone-400 hover:text-red-400 border border-stone-700 hover:border-red-500/40 px-3 py-1.5 rounded-xl transition-all"
+              title="清理今天"
+            >
+              <Trash2 size={14} />
+              清理今天
+            </button>
+          )}
+          <button
+            onClick={() => dispatch({ type: 'OPEN_FOCUS_SELECTION' })}
+            className="flex items-center gap-2 text-sm font-medium text-orange-400 hover:text-orange-300 border border-orange-500/40 hover:border-orange-500/80 px-3 py-1.5 rounded-xl transition-all hover:bg-orange-500/5"
+          >
+            <Target size={15} />
+            设置焦点
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
       <div className="mb-4">
         <QuickFilters todos={todayTodos} />
       </div>
+
+      {/* 今日待复习提示 */}
+      {dueReviews > 0 && (
+        <button
+          onClick={() => dispatch({ type: 'SET_VIEW', payload: 'learning' })}
+          className="w-full flex items-center gap-3 mb-4 p-3 bg-purple-900/20 border border-purple-500/30 rounded-xl hover:bg-purple-900/30 transition-colors text-left"
+        >
+          <BookOpen size={15} className="text-purple-400 flex-shrink-0" />
+          <span className="text-sm text-purple-300">
+            📖 今日有 <span className="font-semibold">{dueReviews}</span> 张知识卡片待复习
+          </span>
+          <span className="ml-auto text-xs text-purple-500">去复习 →</span>
+        </button>
+      )}
+
+      {/* 逾期任务 */}
+      {overdueTasks.length > 0 && (
+        <div className="mb-5">
+          <div className="flex items-center gap-2 text-xs font-semibold text-red-400 uppercase tracking-wide mb-2">
+            <AlertCircle size={13} />
+            逾期任务 ({overdueTasks.length})
+          </div>
+          <div className="space-y-2">
+            {overdueTasks.map(task => (
+              <div key={task.id} className="relative">
+                <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-red-500/60 rounded-full" />
+                <div className="pl-3">
+                  <TaskCard task={task} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 智能推荐 */}
+      {suggestedTasks.length > 0 && (
+        <div className="mb-5">
+          <button
+            onClick={() => setShowSuggested(v => !v)}
+            className="flex items-center gap-2 text-xs font-semibold text-yellow-500 uppercase tracking-wide mb-2 hover:text-yellow-400 transition-colors w-full text-left"
+          >
+            <Lightbulb size={13} />
+            建议今日完成 ({suggestedTasks.length})
+            {showSuggested ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </button>
+          {showSuggested && (
+            <div className="space-y-2">
+              {suggestedTasks.map(task => (
+                <div key={task.id} className="relative opacity-80 hover:opacity-100 transition-opacity">
+                  <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-yellow-500/50 rounded-full" />
+                  <div className="pl-3">
+                    <TaskCard task={task} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Completed tasks */}
       {completedTasks.length > 0 && (

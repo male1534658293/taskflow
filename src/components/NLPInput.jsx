@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { X, Zap, Calendar, Check, Loader2, ExternalLink, AlertCircle } from 'lucide-react'
 import { useApp } from '../store/AppContext.jsx'
-import { parseNLP, priorityColor, priorityDot } from '../utils/helpers.js'
+import { parseNLP, priorityColor, priorityDot, TASK_DURATION_OPTIONS, formatDurationMinutes } from '../utils/helpers.js'
 import { isGoogleConnected, createCalendarEvent } from '../utils/googleCalendar.js'
 
 const RECURRENCE_LABEL = { daily: '每天', weekly: '每周', weekdays: '工作日', monthly: '每月', yearly: '每年' }
@@ -10,6 +10,7 @@ export default function NLPInput() {
   const { dispatch } = useApp()
   const [input, setInput] = useState('')
   const [parsed, setParsed] = useState(null)
+  const [durationMinutes, setDurationMinutes] = useState(null)
   const [syncToCalendar, setSyncToCalendar] = useState(isGoogleConnected())
   const [calSyncState, setCalSyncState] = useState('idle') // idle | syncing | success | error
   const [calEventLink, setCalEventLink] = useState(null)
@@ -20,13 +21,18 @@ export default function NLPInput() {
   useEffect(() => { inputRef.current?.focus() }, [])
 
   useEffect(() => {
-    if (input.trim()) setParsed(parseNLP(input))
+    if (input.trim()) {
+      const result = parseNLP(input)
+      if (durationMinutes && !result.durationMinutes) result.durationMinutes = durationMinutes
+      setParsed(result)
+    }
     else setParsed(null)
-  }, [input])
+  }, [input, durationMinutes])
 
   async function handleCreate() {
     if (!input.trim()) return
     const result = parsed || parseNLP(input)
+    if (durationMinutes && !result.durationMinutes) result.durationMinutes = durationMinutes
 
     // 先创建任务（本地）
     dispatch({ type: 'ADD_TODO', payload: result })
@@ -106,10 +112,33 @@ export default function NLPInput() {
                 <span className={`font-medium ${priorityColor(parsed.priority)}`}>{priorityDot(parsed.priority)} {parsed.priority}</span>
                 {parsed.tags?.length > 0 && (<><span className="text-stone-400">标签</span><span className="text-stone-300">{parsed.tags.map(t => `#${t}`).join(' ')}</span></>)}
                 {parsed.dueDate && (<><span className="text-stone-400">截止</span><span className="text-stone-300">📅 {parsed.dueDate}{parsed.dueTime ? ` ⏰ ${parsed.dueTime}` : ''}</span></>)}
+                {parsed.durationMinutes && (<><span className="text-stone-400">时长</span><span className="text-stone-300">⏱ {formatDurationMinutes(parsed.durationMinutes)}</span></>)}
                 {parsed.recurrence && (<><span className="text-stone-400">重复</span><span className="text-stone-300">🔁 {RECURRENCE_LABEL[parsed.recurrence] || parsed.recurrence}</span></>)}
               </div>
             </div>
           )}
+
+          <div className="mt-3">
+            <p className="text-xs text-stone-600 mb-1.5 px-1">任务时长</p>
+            <div className="flex gap-1.5 flex-wrap">
+              {TASK_DURATION_OPTIONS.map(opt => {
+                const active = (parsed?.durationMinutes ?? durationMinutes ?? null) === opt.value
+                return (
+                  <button
+                    key={String(opt.value)}
+                    onClick={() => setDurationMinutes(opt.value)}
+                    className={`px-3 py-1 text-xs rounded-lg border transition-colors ${
+                      active
+                        ? 'bg-orange-500/20 text-orange-400 border-orange-500/40'
+                        : 'bg-stone-800 text-stone-500 border-stone-700 hover:border-stone-500 hover:text-stone-300'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
 
           {/* Google Calendar Sync Toggle */}
           <div className={`mt-3 rounded-xl border transition-colors ${syncToCalendar && googleConnected ? 'border-green-500/40 bg-green-500/5' : 'border-stone-700 bg-stone-800/30'}`}>
@@ -158,6 +187,7 @@ export default function NLPInput() {
             {syncToCalendar && googleConnected && parsed?.dueDate && calSyncState === 'idle' && (
               <div className="px-3 pb-2.5 flex items-center gap-3 text-xs text-stone-500 border-t border-stone-700/50 pt-2">
                 <span>📅 {parsed.dueDate}{parsed.dueTime ? ` ${parsed.dueTime}` : ' 09:00'}</span>
+                {parsed.durationMinutes && <span>⏱ {formatDurationMinutes(parsed.durationMinutes)}</span>}
                 <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
                   parsed.priority === 'P1' ? 'bg-red-500/10 text-red-400' :
                   parsed.priority === 'P2' ? 'bg-orange-500/10 text-orange-400' :
@@ -211,7 +241,7 @@ export default function NLPInput() {
           {/* Syntax hints */}
           <div className="mt-2 px-1">
             <div className="flex flex-wrap gap-1">
-              {['p1-p4', '九点三十', '下午两点半', '明天', '后天', 'next monday', '@tag', '#project'].map(hint => (
+              {['p1-p4', '明天', '后天', 'next monday', 'in 3 days', '@tag', '#project', '2点半', '两点半', '下午两点半', '2:30'].map(hint => (
                 <span key={hint} className="text-xs bg-stone-800 text-stone-500 px-2 py-0.5 rounded-full">{hint}</span>
               ))}
             </div>

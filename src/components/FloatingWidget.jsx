@@ -39,6 +39,15 @@ function localDate(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
+function readFloatPref(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw === null ? fallback : JSON.parse(raw)
+  } catch {
+    return fallback
+  }
+}
+
 function fmt(s) {
   return `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`
 }
@@ -331,10 +340,13 @@ export default function FloatingWidget() {
   const [collapsed,    setCollapsed]    = useState(false)
   const [opacity,      setOpacity]      = useState(1)
   const [pinned,       setPinned]       = useState(true)
+  const [clickThrough, setClickThrough] = useState(() => readFloatPref('taskflow-float-click-through', false))
+  const [autoCollapse, setAutoCollapse] = useState(() => readFloatPref('taskflow-float-auto-collapse', true))
   const [showSettings, setShowSettings] = useState(false)
   const [showCal,      setShowCal]      = useState(false)
   const [showPom,      setShowPom]      = useState(false)
   const [toast,        setToast]        = useState(null)
+  const [collapsedByBlur, setCollapsedByBlur] = useState(false)
 
   // Task interaction
   const [editingId, setEditingId] = useState(null)
@@ -433,6 +445,13 @@ export default function FloatingWidget() {
     if (isElectron) window.electronAPI.setFloatAlwaysOnTop(next)
   }
 
+  function handleClickThrough(nextValue) {
+    setClickThrough(nextValue)
+    try { localStorage.setItem('taskflow-float-click-through', JSON.stringify(nextValue)) } catch {}
+    if (isElectron) window.electronAPI.setFloatClickThrough(nextValue)
+    showT(nextValue ? '穿透已开启，按 Cmd+Shift+X 可切回交互' : '穿透已关闭')
+  }
+
   // ── Add task ──
   function handleAdd() {
     if (!input.trim()) return
@@ -489,6 +508,39 @@ export default function FloatingWidget() {
     return () => window.removeEventListener('keydown', onKey)
   }, [focused, filtered, filter])
 
+  useEffect(() => {
+    try { localStorage.setItem('taskflow-float-auto-collapse', JSON.stringify(autoCollapse)) } catch {}
+  }, [autoCollapse])
+
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.onFloatClickThroughChanged) return
+    const handler = (_, payload) => {
+      const enabled = !!payload?.enabled
+      setClickThrough(enabled)
+      try { localStorage.setItem('taskflow-float-click-through', JSON.stringify(enabled)) } catch {}
+    }
+    window.electronAPI.onFloatClickThroughChanged(handler)
+  }, [isElectron])
+
+  useEffect(() => {
+    function onBlur() {
+      if (!autoCollapse || collapsed) return
+      setCollapsed(true)
+      setCollapsedByBlur(true)
+    }
+    function onFocus() {
+      if (!collapsedByBlur) return
+      setCollapsed(false)
+      setCollapsedByBlur(false)
+    }
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [autoCollapse, collapsed, collapsedByBlur])
+
   const isMini = size === 'mini'
 
   return (
@@ -542,6 +594,13 @@ export default function FloatingWidget() {
           className={`w-5 h-5 rounded flex items-center justify-center transition-colors
             ${pinned ? 'text-orange-400' : 'text-stone-700 hover:text-stone-400'}`}>
           {pinned ? <Pin size={9} /> : <PinOff size={9} />}
+        </button>
+
+        <button onClick={() => handleClickThrough(!clickThrough)} style={{ WebkitAppRegion: 'no-drag' }}
+          title={clickThrough ? '关闭点击穿透' : '开启点击穿透'}
+          className={`min-w-5 h-5 rounded px-1 flex items-center justify-center transition-colors text-[10px]
+            ${clickThrough ? 'text-sky-400 bg-sky-500/10' : 'text-stone-700 hover:text-stone-400'}`}>
+          穿
         </button>
 
         {/* Collapse */}
@@ -633,6 +692,25 @@ export default function FloatingWidget() {
                   className="flex-1 h-1 accent-orange-500 cursor-pointer" />
                 <span className="text-xs text-stone-500 w-8 text-right">{Math.round(opacity*100)}%</span>
               </div>
+              <div className="mt-2 flex items-center justify-between gap-3 text-xs">
+                <button
+                  onClick={() => handleClickThrough(!clickThrough)}
+                  className={`px-2 py-1 rounded-lg transition-colors ${
+                    clickThrough ? 'bg-sky-500/15 text-sky-400' : 'bg-stone-800 text-stone-400 hover:bg-stone-700'
+                  }`}
+                >
+                  {clickThrough ? '已开启点击穿透' : '开启点击穿透'}
+                </button>
+                <button
+                  onClick={() => setAutoCollapse(v => !v)}
+                  className={`px-2 py-1 rounded-lg transition-colors ${
+                    autoCollapse ? 'bg-orange-500/15 text-orange-400' : 'bg-stone-800 text-stone-400 hover:bg-stone-700'
+                  }`}
+                >
+                  {autoCollapse ? '失焦自动收起' : '关闭自动收起'}
+                </button>
+              </div>
+              <div className="mt-1 text-[10px] text-stone-600">点击穿透后可用 Cmd+Shift+X 切回可交互状态。</div>
             </div>
           )}
 

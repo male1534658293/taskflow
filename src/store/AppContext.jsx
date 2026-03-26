@@ -6,11 +6,13 @@ import {
   updateCalendarEvent,
   deleteCalendarEvent,
 } from '../utils/googleCalendar.js'
+import { reviewCard, createCard, isDueToday } from '../utils/srs.js'
 
 const AppContext = createContext(null)
 
 const STORAGE_KEY = 'taskflow-todos'
 const USER_KEY = 'taskflow-user'
+const LEARNING_KEY = 'taskflow-learning'
 
 function loadTodos() {
   try {
@@ -28,10 +30,30 @@ function loadUser() {
   return { ...DEFAULT_USER }
 }
 
+const SAVED_AT_KEY = 'taskflow-saved-at'
+
+function loadLearning() {
+  try {
+    const s = localStorage.getItem(LEARNING_KEY)
+    if (s) {
+      const parsed = JSON.parse(s)
+      return {
+        cards: [],
+        reviewStreak: 0,
+        lastReviewDate: null,
+        reviewHistory: {},
+        settings: { dailyNewCardLimit: 20 },
+        ...parsed,
+      }
+    }
+  } catch {}
+  return { cards: [], reviewStreak: 0, lastReviewDate: null, reviewHistory: {}, settings: { dailyNewCardLimit: 20 } }
+}
+
 const DEFAULT_USER = { name: '', email: '', karma: 0, streak: 0, longestStreak: 0 }
 
 // 初始化主题 class
-const savedTheme = (() => { try { return localStorage.getItem('taskflow-theme') || 'dark' } catch { return 'dark' } })()
+const savedTheme = (() => { try { return localStorage.getItem('taskflow-theme') || 'light' } catch { return 'light' } })()
 document.documentElement.classList.toggle('dark', savedTheme === 'dark')
 document.documentElement.classList.toggle('light', savedTheme !== 'dark')
 
@@ -49,6 +71,7 @@ const initialState = {
   // Google Calendar 同步队列
   // entry: { op: 'create'|'update'|'delete', todoId?, eventId? }
   gcalQueue: [],
+  learning: loadLearning(),
 }
 
 // ─── 工具：把 gcalQueue 条目附加到 action result ─────────────────────────────
@@ -83,6 +106,7 @@ function reducer(state, action) {
         tags: action.payload.tags || [],
         dueDate: action.payload.dueDate || null,
         dueTime: action.payload.dueTime || null,
+        durationMinutes: action.payload.durationMinutes || null,
         recurrence: action.payload.recurrence || null,
         description: action.payload.description || '',
         subtasks: [],
@@ -483,6 +507,109 @@ function reducer(state, action) {
     case 'DEQUEUE_GCAL':
       return { ...state, gcalQueue: state.gcalQueue.slice(action.payload) }
 
+    // ── 清理今天（把今天的任务移到明天）────────────────────────────────────────
+    case 'CLEAR_TODAY': {
+      const todayD = new Date()
+      const todayS = `${todayD.getFullYear()}-${String(todayD.getMonth()+1).padStart(2,'0')}-${String(todayD.getDate()).padStart(2,'0')}`
+      const tom = new Date(todayD); tom.setDate(tom.getDate() + 1)
+      const tomS = `${tom.getFullYear()}-${String(tom.getMonth()+1).padStart(2,'0')}-${String(tom.getDate()).padStart(2,'0')}`
+      const changedIds = []
+      const newTodos = state.todos.map(t => {
+        if (t.status === 'completed' || t.recurrence) return t
+        if (t.dueDate === todayS) { changedIds.push(t.id); return { ...t, dueDate: tomS } }
+        return t
+      })
+      return {
+        ...state,
+        todos: newTodos,
+        gcalQueue: [...state.gcalQueue, ...changedIds.map(id => queueUpdate(id))],
+        sync: { ...state.sync, pendingCount: state.sync.pendingCount + 1, status: 'syncing' },
+      }
+    }
+
+    // ── iCloud 数据加载 ────────────────────────────────────────────────────────
+    case 'LOAD_ICLOUD_DATA':
+      return {
+        ...state,
+        todos: action.payload.todos || state.todos,
+        learning: action.payload.learning
+          ? { ...loadLearning(), ...action.payload.learning }
+          : state.learning,
+      }
+
+    // ── 学习记录 ──────────────────────────────────────────────────────────────
+    case 'ADD_LEARNING_CARD': {
+      const card = createCard(action.payload)
+      return { ...state, learning: { ...state.learning, cards: [...state.learning.cards, card] } }
+    }
+
+    case 'UPDATE_LEARNING_CARD': {
+      const cards = state.learning.cards.map(c =>
+        c.id === action.payload.id ? { ...c, ...action.payload } : c
+      )
+      return { ...state, learning: { ...state.learning, cards } }
+    }
+
+    case 'DELETE_LEARNING_CARD': {
+      const cards = state.learning.cards.filter(c => c.id !== action.payload)
+      return { ...state, learning: { ...state.learning, cards } }
+    }
+
+    case 'BURY_CARD': {
+      const tom = new Date(); tom.setDate(tom.getDate() + 1)
+      const tomStr = tom.toISOString().slice(0, 10)
+      const cards = state.learning.cards.map(c =>
+        c.id === action.payload ? { ...c, buriedUntil: tomStr } : c
+      )
+      return { ...state, learning: { ...state.learning, cards } }
+    }
+
+    case 'SUSPEND_CARD': {
+      const cards = state.learning.cards.map(c =>
+        c.id === action.payload ? { ...c, suspended: true } : c
+      )
+      return { ...state, learning: { ...state.learning, cards } }
+    }
+
+    case 'UNSUSPEND_CARD': {
+      const cards = state.learning.cards.map(c =>
+        c.id === action.payload ? { ...c, suspended: false, buriedUntil: null } : c
+      )
+      return { ...state, learning: { ...state.learning, cards } }
+    }
+
+    case 'UPDATE_LEARNING_SETTINGS': {
+      return {
+        ...state,
+        learning: { ...state.learning, settings: { ...state.learning.settings, ...action.payload } },
+      }
+    }
+
+    case 'REVIEW_LEARNING_CARD': {
+      const { id, rating } = action.payload
+      const card = state.learning.cards.find(c => c.id === id)
+      if (!card) return state
+      const updated = reviewCard(card, rating)
+      const cards = state.learning.cards.map(c => c.id === id ? updated : c)
+      // 更新复习连续天数
+      const today = new Date().toISOString().slice(0, 10)
+      const yesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10) })()
+      const { reviewStreak, lastReviewDate } = state.learning
+      const newStreak = lastReviewDate === today ? reviewStreak
+        : lastReviewDate === yesterday ? reviewStreak + 1
+        : 1
+      // 更新热力图
+      const reviewHistory = {
+        ...(state.learning.reviewHistory || {}),
+        [today]: ((state.learning.reviewHistory || {})[today] || 0) + 1,
+      }
+      return {
+        ...state,
+        learning: { ...state.learning, cards, reviewStreak: newStreak, lastReviewDate: today, reviewHistory },
+        user: { ...state.user, karma: state.user.karma + 2 },
+      }
+    }
+
     default:
       return state
   }
@@ -493,6 +620,7 @@ function reducer(state, action) {
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const processingRef = useRef(false)
+  const icloudTimerRef = useRef(null)
 
   // 持久化 todos
   useEffect(() => {
@@ -504,8 +632,34 @@ export function AppProvider({ children }) {
     try { localStorage.setItem(USER_KEY, JSON.stringify(state.user)) } catch {}
   }, [state.user])
 
-  // 深色主题初始化
-  useEffect(() => { document.documentElement.classList.add('dark') }, [])
+  // 持久化学习记录
+  useEffect(() => {
+    try { localStorage.setItem(LEARNING_KEY, JSON.stringify(state.learning)) } catch {}
+  }, [state.learning])
+
+  // iCloud 同步：数据变化后 5s 写入（防抖）
+  useEffect(() => {
+    if (!window.electronAPI?.icloudSave) return
+    clearTimeout(icloudTimerRef.current)
+    icloudTimerRef.current = setTimeout(() => {
+      const savedAt = Date.now()
+      try { localStorage.setItem(SAVED_AT_KEY, savedAt.toString()) } catch {}
+      window.electronAPI.icloudSave({ todos: state.todos, learning: state.learning, savedAt })
+    }, 5000)
+  }, [state.todos, state.learning]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // iCloud 启动时加载（如果 iCloud 数据更新）
+  useEffect(() => {
+    if (!window.electronAPI?.icloudLoad) return
+    window.electronAPI.icloudLoad().then(result => {
+      if (!result?.success || !result.data) return
+      const localSavedAt = parseInt(localStorage.getItem(SAVED_AT_KEY) || '0')
+      if ((result.data.savedAt || 0) > localSavedAt) {
+        dispatch({ type: 'LOAD_ICLOUD_DATA', payload: result.data })
+        try { localStorage.setItem(SAVED_AT_KEY, result.data.savedAt.toString()) } catch {}
+      }
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 跨窗口同步（浮窗 ↔ 主窗口）
   useEffect(() => {

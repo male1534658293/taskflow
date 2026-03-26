@@ -5,7 +5,7 @@ import {
   revokeGoogleAccess,
   isGoogleConnected,
   getGoogleEmail,
-  hasCredentials,
+  getGoogleCredentialStatus,
 } from '../utils/googleCalendar.js'
 
 export default function GoogleCalendarSync({ onConnectionChange }) {
@@ -15,14 +15,32 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
   const [waitingBrowser, setWaitingBrowser] = useState(false)
   const [error, setError] = useState(null)
   const [showGuide, setShowGuide] = useState(true)
+  const [credentialStatus, setCredentialStatus] = useState({ configured: false, source: 'missing', clientIdPreview: '' })
+  const [clientIdInput, setClientIdInput] = useState('')
+  const [clientSecretInput, setClientSecretInput] = useState('')
+  const [savingConfig, setSavingConfig] = useState(false)
 
-  const isDemo = !hasCredentials()
+  React.useEffect(() => {
+    let active = true
+    getGoogleCredentialStatus().then(status => {
+      if (active && status) setCredentialStatus(status)
+    })
+    return () => { active = false }
+  }, [])
 
   async function handleConnect() {
     setLoading(true)
     setError(null)
 
-    if (!isDemo) setWaitingBrowser(true)
+    const status = await getGoogleCredentialStatus()
+    setCredentialStatus(status)
+    if (!status.configured) {
+      setLoading(false)
+      setError('未配置 Google OAuth 凭据，请先在启动应用前设置 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET，或用带内置凭据的构建版本。')
+      return
+    }
+
+    setWaitingBrowser(true)
 
     const result = await requestGoogleAccess()
     setLoading(false)
@@ -36,6 +54,7 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
       const msg = result.error === 'access_denied' ? '授权被拒绝，请重试'
         : result.error === 'timeout' ? '授权超时（5 分钟），请重试'
         : result.error === 'cancelled' ? '授权已取消'
+        : result.error === 'missing_credentials' ? '当前应用未配置 Google OAuth 凭据，无法继续授权'
         : result.error || '连接失败，请重试'
       setError(msg)
     }
@@ -49,6 +68,39 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
     onConnectionChange?.(false, '')
   }
 
+  async function handleSaveConfig() {
+    if (!window.electronAPI?.saveGoogleOAuthConfig) {
+      setError('当前环境不支持在应用内保存 Google OAuth 凭据')
+      return
+    }
+
+    setSavingConfig(true)
+    setError(null)
+    const result = await window.electronAPI.saveGoogleOAuthConfig({
+      clientId: clientIdInput,
+      clientSecret: clientSecretInput,
+    })
+    setSavingConfig(false)
+
+    if (result?.success) {
+      setCredentialStatus(result)
+      setClientSecretInput('')
+    } else {
+      setError(result?.error === 'missing_credentials' ? '请完整填写 Client ID 和 Client Secret' : (result?.error || '保存失败'))
+    }
+  }
+
+  async function handleClearConfig() {
+    await window.electronAPI?.clearGoogleOAuthConfig?.()
+    const status = await getGoogleCredentialStatus()
+    setCredentialStatus(status)
+    setClientIdInput('')
+    setClientSecretInput('')
+    setConnected(false)
+    setEmail('')
+    revokeGoogleAccess()
+  }
+
   if (connected) {
     return (
       <div className="space-y-3">
@@ -60,9 +112,6 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
             <div className="flex items-center gap-1.5">
               <Check size={13} className="text-green-400" />
               <span className="text-sm font-medium text-stone-200">已连接 Google Calendar</span>
-              {isDemo && (
-                <span className="text-xs bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded-full">演示</span>
-              )}
             </div>
             {email && <p className="text-xs text-stone-400 mt-0.5 truncate">{email}</p>}
           </div>
@@ -73,6 +122,16 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
             断开
           </button>
         </div>
+        {credentialStatus.source === 'userData' && (
+          <div className="flex justify-end">
+            <button
+              onClick={handleClearConfig}
+              className="text-xs text-stone-500 hover:text-red-400 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10"
+            >
+              清除本地 OAuth 配置
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2 text-xs text-stone-400">
           {['创建任务时自动同步', '颜色按优先级标注', '支持循环任务规则', '30 分钟前弹窗提醒'].map(f => (
             <div key={f} className="flex items-center gap-1.5 p-2 bg-stone-800/50 rounded-lg">
@@ -102,9 +161,9 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
             <div className="flex gap-2.5">
               <div className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center mt-0.5">1</div>
               <div>
-                <p className="text-xs font-medium text-stone-300 mb-0.5">飞书开启 Google 日历同步</p>
+                <p className="text-xs font-medium text-stone-300 mb-0.5">飞书中绑定 Google 日历</p>
                 <p className="text-xs text-stone-500 leading-relaxed">
-                  飞书 → 设置 → 日历 → 第三方日历同步 → 选择 <span className="text-stone-300">Google 日历</span> → 开启
+                  打开 <span className="text-stone-300">飞书 → 设置 → 日历 → 第三方日历 → 进入设置 → 绑定 Google 日历</span>
                 </p>
               </div>
             </div>
@@ -117,7 +176,7 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
               <div>
                 <p className="text-xs font-medium text-stone-300 mb-0.5">在此连接 Google 账户</p>
                 <p className="text-xs text-stone-500 leading-relaxed">
-                  点击下方按钮 → 浏览器打开授权页面 → 用 Google 账号登录并点击"允许" → 自动返回应用
+                  点击下方按钮，浏览器会打开 Google 授权页；使用刚才绑定到飞书的同一个 Google 账号完成授权
                 </p>
               </div>
             </div>
@@ -150,9 +209,37 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
       )}
 
       {/* Connect button */}
+      {!credentialStatus.configured && !!window.electronAPI?.saveGoogleOAuthConfig && (
+        <div className="space-y-2 rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+          <div>
+            <div className="text-xs font-medium text-stone-300">先填写 OAuth 凭据</div>
+            <div className="text-xs text-stone-500 mt-1">把 Google Cloud Console 里 Desktop App 的 Client ID 和 Client Secret 填到这里，本机会保存到应用配置目录。</div>
+          </div>
+          <input
+            value={clientIdInput}
+            onChange={e => setClientIdInput(e.target.value)}
+            placeholder="Google Client ID"
+            className="w-full rounded-lg border border-stone-700 bg-stone-800 px-3 py-2 text-xs text-stone-200 outline-none focus:border-orange-500"
+          />
+          <input
+            value={clientSecretInput}
+            onChange={e => setClientSecretInput(e.target.value)}
+            placeholder="Google Client Secret"
+            className="w-full rounded-lg border border-stone-700 bg-stone-800 px-3 py-2 text-xs text-stone-200 outline-none focus:border-orange-500"
+          />
+          <button
+            onClick={handleSaveConfig}
+            disabled={savingConfig}
+            className="w-full rounded-lg bg-stone-100 px-3 py-2 text-xs font-medium text-stone-900 transition-colors hover:bg-white disabled:opacity-60"
+          >
+            {savingConfig ? '保存中…' : '保存凭据'}
+          </button>
+        </div>
+      )}
+
       <button
         onClick={handleConnect}
-        disabled={loading}
+        disabled={loading || !credentialStatus.configured}
         className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed text-gray-700 font-medium text-sm rounded-xl border border-gray-200 transition-colors shadow-sm"
       >
         {loading ? <Loader2 size={16} className="animate-spin text-gray-400" /> : <GoogleIcon />}
@@ -171,7 +258,9 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
       {/* Hint */}
       {!waitingBrowser && !error && (
         <p className="text-xs text-stone-600 text-center">
-          {isDemo ? '未配置凭据，将以演示模式运行' : '点击后浏览器将自动打开授权页面，授权后自动返回'}
+          {credentialStatus.configured
+            ? '点击后浏览器将自动打开授权页面，授权后自动返回'
+            : '当前未检测到可用的 Google OAuth 凭据，未连接前不会进入演示模式'}
         </p>
       )}
     </div>
@@ -196,7 +285,7 @@ export function CalendarSyncBadge({ eventLink, demo }) {
       target="_blank"
       rel="noopener noreferrer"
       onClick={e => !eventLink && e.preventDefault()}
-      title={demo ? '已同步到演示日历' : '在 Google Calendar 中查看'}
+      title={demo ? '同步状态异常，请重新连接 Google Calendar' : '在 Google Calendar 中查看'}
       className="inline-flex items-center gap-1 text-xs text-green-400 hover:text-green-300 transition-colors"
     >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">

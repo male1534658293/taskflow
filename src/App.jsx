@@ -10,6 +10,8 @@ import StatsView from './views/StatsView.jsx'
 import SettingsView from './views/SettingsView.jsx'
 import AchievementsView from './views/AchievementsView.jsx'
 import TagsView from './views/TagsView.jsx'
+import LearningView from './views/LearningView.jsx'
+import Onboarding from './components/Onboarding.jsx'
 import TaskDetailModal from './components/TaskDetailModal.jsx'
 import NLPInput from './components/NLPInput.jsx'
 import FocusSelectionModal from './components/FocusSelectionModal.jsx'
@@ -33,11 +35,35 @@ function Layout() {
 
   useEffect(() => {
     if (!window.electronAPI) return
-    window.electronAPI.onUpdateAvailable?.((_, info) => setUpdateInfo(info))
-    window.electronAPI.onUpdateDownloading?.(() => setUpdateStatus('downloading'))
-    window.electronAPI.onUpdateProgress?.((_, pct) => setDownloadPct(pct))
-    window.electronAPI.onUpdateDownloaded?.(() => setUpdateStatus('done'))
-    window.electronAPI.onUpdateError?.((_, msg) => setUpdateError(msg))
+    const onAvailable = (_, info) => {
+      setUpdateInfo(info)
+      setUpdateStatus(null)
+      setDownloadPct(0)
+      setUpdateError(null)
+    }
+    const onDownloading = (_, payload) => {
+      setUpdateStatus('downloading')
+      if (typeof payload?.progress === 'number') setDownloadPct(payload.progress)
+    }
+    const onProgress = (_, payload) => {
+      const pct = typeof payload?.progress === 'number' ? payload.progress : payload
+      setDownloadPct(pct || 0)
+    }
+    const onDownloaded = () => {
+      setUpdateStatus('done')
+      setDownloadPct(100)
+    }
+    const onError = (_, payload) => {
+      const message = typeof payload === 'string' ? payload : payload?.message
+      setUpdateStatus(null)
+      setUpdateError(message || '更新失败')
+    }
+
+    window.electronAPI.onUpdateAvailable?.(onAvailable)
+    window.electronAPI.onUpdateDownloading?.(onDownloading)
+    window.electronAPI.onUpdateProgress?.(onProgress)
+    window.electronAPI.onUpdateDownloaded?.(onDownloaded)
+    window.electronAPI.onUpdateError?.(onError)
   }, [])
 
   if (isFloatMode) {
@@ -54,6 +80,7 @@ function Layout() {
     settings: SettingsView,
     achievements: AchievementsView,
     tags: TagsView,
+    learning: LearningView,
   }
 
   const CurrentView = views[currentView] || TodayView
@@ -69,6 +96,7 @@ function Layout() {
       {modals.nlpInput && <NLPInput />}
       {modals.focusSelection && <FocusSelectionModal />}
       {modals.celebration && <Celebration />}
+      <Onboarding />
 
       {/* 更新错误提示（仅开发调试用） */}
       {updateError && !updateInfo && (
@@ -90,6 +118,11 @@ function Layout() {
             <p className="text-xs text-stone-400 mb-3 line-clamp-2">{updateInfo.releaseNotes}</p>
           ) : (
             <p className="text-xs text-stone-500 mb-3">点击立即更新后台下载，完成后提示重启安装。</p>
+          )}
+          {updateError && (
+            <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-xs text-red-300">
+              {updateError}
+            </div>
           )}
           {updateStatus === 'downloading' && (
             <div>
@@ -119,7 +152,10 @@ function Layout() {
           {!updateStatus && (
             <div className="flex gap-2">
               <button
-                onClick={() => window.electronAPI?.downloadUpdate?.()}
+                onClick={() => {
+                  setUpdateError(null)
+                  window.electronAPI?.downloadUpdate?.()
+                }}
                 className="flex-1 text-xs bg-orange-600 hover:bg-orange-500 text-white py-1.5 rounded-lg transition-colors font-medium"
               >
                 立即更新

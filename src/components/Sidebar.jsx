@@ -1,17 +1,19 @@
 import React from 'react'
-import { Zap, Calendar, Inbox, Layout, BarChart2, Settings, Flame, Plus, CheckSquare, CalendarDays, BarChart, Trophy, PanelTopOpen, Tag } from 'lucide-react'
+import { Zap, Calendar, Inbox, Layout, BarChart2, Settings, Flame, Plus, CalendarDays, BarChart, Trophy, PanelTopOpen, BookOpen, Tag } from 'lucide-react'
 import { useApp } from '../store/AppContext.jsx'
 import { isToday } from '../utils/helpers.js'
+import { isDueToday } from '../utils/srs.js'
 
 export default function Sidebar() {
   const { state, dispatch } = useApp()
-  const { currentView, todos, user, sync } = state
+  const { currentView, todos, user, sync, learning } = state
 
   const todayIncomplete = todos.filter(
     t => isToday(t.dueDate) && t.status !== 'completed'
   ).length
 
   const totalIncomplete = todos.filter(t => t.status !== 'completed').length
+  const dueReviews = learning.cards.filter(isDueToday).length
 
   const navItems = [
     { id: 'today', icon: Calendar, label: '今天', badge: todayIncomplete },
@@ -20,6 +22,7 @@ export default function Sidebar() {
     { id: 'calendar', icon: CalendarDays, label: '日历', badge: null },
     { id: 'gantt', icon: BarChart, label: '甘特图', badge: null },
     { id: 'tags', icon: Tag, label: '标签汇总', badge: null },
+    { id: 'learning', icon: BookOpen, label: '学习记录', badge: dueReviews || null },
     { id: 'stats', icon: BarChart2, label: '统计', badge: null },
     { id: 'achievements', icon: Trophy, label: '成就', badge: null },
     { id: 'settings', icon: Settings, label: '设置', badge: null },

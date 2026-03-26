@@ -1,6 +1,6 @@
 /**
  * Google Calendar Integration (Electron Desktop OAuth)
- * 凭据通过 .env.local 的 VITE_GOOGLE_CLIENT_ID / VITE_GOOGLE_CLIENT_SECRET 编译内置
+ * 优先使用 Electron 主进程中的运行时配置，其次回退到构建时注入的 VITE_* 变量。
  */
 
 export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
@@ -11,30 +11,57 @@ const PRIORITY_COLORS = { P1: '11', P2: '6', P3: '9', P4: '1' }
 
 // 重复规则
 const RECURRENCE_RULES = {
-  daily:    'RRULE:FREQ=DAILY',
+  daily: 'RRULE:FREQ=DAILY',
   weekdays: 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
-  weekly:   'RRULE:FREQ=WEEKLY',
-  monthly:  'RRULE:FREQ=MONTHLY',
-  yearly:   'RRULE:FREQ=YEARLY',
-}
-
-export function hasCredentials() {
-  return !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET)
+  weekly: 'RRULE:FREQ=WEEKLY',
+  monthly: 'RRULE:FREQ=MONTHLY',
+  yearly: 'RRULE:FREQ=YEARLY',
 }
 
 function isElectron() {
   return typeof window !== 'undefined' && !!window.electronAPI?.startGoogleOAuth
 }
 
+export function hasCredentials() {
+  return !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET)
+}
+
+export async function getGoogleCredentialStatus() {
+  if (isElectron() && window.electronAPI?.getGoogleOAuthStatus) {
+    try {
+      const result = await window.electronAPI.getGoogleOAuthStatus()
+      return result || { configured: false, source: 'missing', clientIdPreview: '' }
+    } catch {
+      return { configured: false, source: 'missing', clientIdPreview: '' }
+    }
+  }
+
+  return {
+    configured: hasCredentials(),
+    source: hasCredentials() ? 'build' : 'missing',
+    clientIdPreview: GOOGLE_CLIENT_ID ? `${GOOGLE_CLIENT_ID.slice(0, 12)}...` : '',
+  }
+}
+
+function getStoredExpiry() {
+  const value = localStorage.getItem('gcal_token_expiry')
+  return value ? parseInt(value, 10) : 0
+}
+
+function setAuthTokens(result) {
+  const expiry = Date.now() + ((result.expires_in || 3600) - 60) * 1000
+  localStorage.setItem('gcal_token', result.access_token)
+  localStorage.setItem('gcal_token_expiry', expiry.toString())
+  if (result.refresh_token) localStorage.setItem('gcal_refresh_token', result.refresh_token)
+  if (result.email) localStorage.setItem('gcal_email', result.email)
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export async function requestGoogleAccess() {
-  if (!hasCredentials()) {
-    const fakeToken = 'demo_token_' + Date.now()
-    localStorage.setItem('gcal_token', fakeToken)
-    localStorage.setItem('gcal_token_expiry', (Date.now() + 3600 * 1000).toString())
-    localStorage.setItem('gcal_email', 'demo@gmail.com')
-    return { success: true, demo: true }
+  const config = await getGoogleCredentialStatus()
+  if (!config.configured) {
+    return { success: false, error: 'missing_credentials' }
   }
 
   if (!isElectron()) {
@@ -46,12 +73,8 @@ export async function requestGoogleAccess() {
     clientSecret: GOOGLE_CLIENT_SECRET,
   })
 
-  if (result.success) {
-    const expiry = Date.now() + ((result.expires_in || 3600) - 60) * 1000
-    localStorage.setItem('gcal_token', result.access_token)
-    localStorage.setItem('gcal_token_expiry', expiry.toString())
-    if (result.refresh_token) localStorage.setItem('gcal_refresh_token', result.refresh_token)
-    if (result.email) localStorage.setItem('gcal_email', result.email)
+  if (result.success && result.access_token) {
+    setAuthTokens(result)
   }
 
   return result
@@ -59,7 +82,7 @@ export async function requestGoogleAccess() {
 
 export function revokeGoogleAccess() {
   const token = localStorage.getItem('gcal_token')
-  if (token && !token.startsWith('demo_token_')) {
+  if (token) {
     fetch(`https://oauth2.googleapis.com/revoke?token=${token}`, { method: 'POST' }).catch(() => {})
   }
   localStorage.removeItem('gcal_token')
@@ -70,29 +93,59 @@ export function revokeGoogleAccess() {
 
 export function isGoogleConnected() {
   const token = localStorage.getItem('gcal_token')
-  const expiry = localStorage.getItem('gcal_token_expiry')
-  if (!token) return false
-  if (expiry && Date.now() > parseInt(expiry)) {
-    localStorage.removeItem('gcal_token')
-    return false
-  }
-  return true
+  const refreshToken = localStorage.getItem('gcal_refresh_token')
+  const expiry = getStoredExpiry()
+
+  if (!token && !refreshToken) return false
+  if (token && (!expiry || Date.now() < expiry)) return true
+  return !!refreshToken
 }
 
 export function getGoogleEmail() {
   return localStorage.getItem('gcal_email') || ''
 }
 
-// ─── 单次 API 调用（带 demo 短路） ────────────────────────────────────────────
+async function refreshGoogleAccess() {
+  const refreshToken = localStorage.getItem('gcal_refresh_token')
+  if (!refreshToken || !window.electronAPI?.refreshGoogleOAuth) {
+    return { success: false, error: 'missing_refresh_token' }
+  }
+
+  const result = await window.electronAPI.refreshGoogleOAuth({
+    refreshToken,
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
+  })
+
+  if (result.success && result.access_token) {
+    setAuthTokens({ ...result, refresh_token: refreshToken })
+  }
+
+  return result
+}
+
+async function ensureValidToken() {
+  const token = localStorage.getItem('gcal_token')
+  const expiry = getStoredExpiry()
+
+  if (token && expiry && Date.now() < expiry) {
+    return token
+  }
+
+  const refreshed = await refreshGoogleAccess()
+  if (refreshed.success && refreshed.access_token) {
+    return refreshed.access_token
+  }
+
+  revokeGoogleAccess()
+  return null
+}
+
+// ─── 单次 API 调用 ───────────────────────────────────────────────────────────
 
 async function callApi(path, method, body) {
-  const token = localStorage.getItem('gcal_token')
+  const token = await ensureValidToken()
   if (!token) return { success: false, error: 'not_connected' }
-
-  if (token.startsWith('demo_token_') || !hasCredentials()) {
-    await new Promise(r => setTimeout(r, 200))
-    return { success: true, demo: true, eventId: 'demo_' + Date.now(), eventLink: '' }
-  }
 
   try {
     const opts = {
@@ -111,11 +164,15 @@ async function callApi(path, method, body) {
     }
 
     if (res.status === 401) {
+      const refreshedToken = await refreshGoogleAccess()
+      if (refreshedToken.success && refreshedToken.access_token) {
+        return callApi(path, method, body)
+      }
       revokeGoogleAccess()
       return { success: false, error: 'token_expired' }
     }
 
-    if (res.status === 404) return { success: true } // already deleted
+    if (res.status === 404) return { success: true }
 
     const err = await res.json().catch(() => ({}))
     return { success: false, error: err.error?.message || `HTTP ${res.status}` }
@@ -129,16 +186,14 @@ async function callApi(path, method, body) {
 function buildEventBody(task) {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
   const startDate = task.dueDate || new Date().toISOString().split('T')[0]
-  const startTime = task.dueTime || '09:00'
-  const endTime = addOneHour(startTime)
+  const startTime = task.dueTime || null
+  const durationMinutes = task.durationMinutes || null
   const done = task.status === 'completed'
 
   const body = {
     summary: done ? `✓ ${task.title}` : task.title,
     description: buildDescription(task),
     colorId: done ? '8' : (PRIORITY_COLORS[task.priority] || '1'),
-    start: { dateTime: `${startDate}T${startTime}:00`, timeZone: tz },
-    end:   { dateTime: `${startDate}T${endTime}:00`, timeZone: tz },
     reminders: { useDefault: false, overrides: done ? [] : [{ method: 'popup', minutes: 30 }] },
     extendedProperties: {
       private: {
@@ -147,6 +202,14 @@ function buildEventBody(task) {
         tags: (task.tags || []).join(','),
       },
     },
+  }
+
+  if (startTime && durationMinutes) {
+    body.start = { dateTime: `${startDate}T${startTime}:00`, timeZone: tz }
+    body.end = { dateTime: `${startDate}T${addMinutes(startTime, durationMinutes)}:00`, timeZone: tz }
+  } else {
+    body.start = { date: startDate }
+    body.end = { date: addDays(startDate, 1) }
   }
 
   if (!done && task.recurrence && RECURRENCE_RULES[task.recurrence]) {
@@ -158,20 +221,17 @@ function buildEventBody(task) {
 
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
-/** 创建事件，返回 { success, eventId, eventLink } */
 export async function createCalendarEvent(task) {
   return callApi('/calendars/primary/events', 'POST', buildEventBody(task))
 }
 
-/** 更新事件（全量 PUT） */
 export async function updateCalendarEvent(eventId, task) {
-  if (!eventId || eventId.startsWith('demo_')) return { success: true }
+  if (!eventId) return { success: false, error: 'missing_event_id' }
   return callApi(`/calendars/primary/events/${eventId}`, 'PUT', buildEventBody(task))
 }
 
-/** 删除事件 */
 export async function deleteCalendarEvent(eventId) {
-  if (!eventId || eventId.startsWith('demo_')) return { success: true }
+  if (!eventId) return { success: true }
   return callApi(`/calendars/primary/events/${eventId}`, 'DELETE')
 }
 
@@ -184,7 +244,6 @@ function buildDescription(task) {
     lines.push(task.description, '')
   }
 
-  // 子任务以 checklist 形式展示
   if (task.subtasks?.length) {
     lines.push('📋 子任务清单：')
     task.subtasks.forEach(s => lines.push(`  ${s.done ? '☑' : '☐'} ${s.title}`))
@@ -195,15 +254,27 @@ function buildDescription(task) {
 
   lines.push(`优先级: ${task.priority}`)
   if (task.tags?.length) lines.push(`标签: ${task.tags.map(t => `#${t}`).join(' ')}`)
+  if (task.dueTime) lines.push(`开始时间: ${task.dueTime}`)
+  if (task.durationMinutes) lines.push(`预计时长: ${task.durationMinutes} 分钟`)
   if (task.recurrence) lines.push(`重复: ${task.recurrence}`)
   lines.push('', '— 由 TaskFlow 创建')
 
   return lines.join('\n')
 }
 
-// ─── 工具 ─────────────────────────────────────────────────────────────────────
-
-function addOneHour(timeStr) {
+function addMinutes(timeStr, minutes) {
   const [h, m] = timeStr.split(':').map(Number)
-  return `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  const total = h * 60 + m + minutes
+  const nextHour = Math.floor((total % (24 * 60)) / 60)
+  const nextMinute = total % 60
+  return `${String(nextHour).padStart(2, '0')}:${String(nextMinute).padStart(2, '0')}`
+}
+
+function addDays(dateStr, days) {
+  const date = new Date(`${dateStr}T00:00:00`)
+  date.setDate(date.getDate() + days)
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }

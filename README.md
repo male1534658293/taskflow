@@ -58,3 +58,10 @@ npm run electron:build # 打包为 .dmg（macOS）
 - Electron 41
 - electron-updater（自动更新）
 - Google Calendar API（OAuth 2.0 Desktop 流程）
+
+## 执行规范
+
+涉及飞书 aPaaS、接口排障、组件实现、流程设计时，先按 Viking 既有内容检索和对齐，再决定实现方案。
+
+- 规则文档：`docs/viking-first-execution-rule.md`
+- 基准资料：`/Users/bytedance/openviking_workspace/viking/default/resources/apaas_project/apaas_api_and_pitfalls/飞书_aPaaS_平台_API_接口与踩坑记录_汇总文档.md`

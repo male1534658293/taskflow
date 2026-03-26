@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { X, Trash2, Edit3, RefreshCw, Bell, User, Tag, Calendar, MessageCircle, ChevronRight, Check, Send, Play, Pause, RotateCcw, Timer } from 'lucide-react'
 import { useApp } from '../store/AppContext.jsx'
-import { priorityBg, priorityColor, priorityDot, formatDueDisplay, formatRelativeTime } from '../utils/helpers.js'
+import { priorityBg, priorityColor, priorityDot, formatDueDisplay, formatRelativeTime, TASK_DURATION_OPTIONS, formatDurationMinutes } from '../utils/helpers.js'
 
 export default function TaskDetailModal({ task }) {
   const { state, dispatch } = useApp()
@@ -82,6 +82,7 @@ export default function TaskDetailModal({ task }) {
       priority: liveTask.priority,
       dueDate: liveTask.dueDate || '',
       dueTime: liveTask.dueTime || '',
+      durationMinutes: liveTask.durationMinutes || null,
       recurrence: liveTask.recurrence || null,
       tags: [...(liveTask.tags || [])],
       description: liveTask.description || '',
@@ -236,6 +237,25 @@ export default function TaskDetailModal({ task }) {
                 </div>
               </div>
 
+              <div>
+                <label className="text-xs text-stone-500 uppercase tracking-wide mb-1 block">任务时长</label>
+                <div className="flex gap-1.5 flex-wrap">
+                  {TASK_DURATION_OPTIONS.map(opt => (
+                    <button
+                      key={String(opt.value)}
+                      onClick={() => setEditData(prev => ({ ...prev, durationMinutes: opt.value }))}
+                      className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                        editData.durationMinutes === opt.value
+                          ? 'bg-orange-500/20 text-orange-400 border-orange-500/40'
+                          : 'bg-stone-800 text-stone-500 border-stone-700 hover:border-stone-500 hover:text-stone-300'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Recurrence */}
               <div>
                 <label className="text-xs text-stone-500 uppercase tracking-wide mb-1 block">重复频率</label>
@@ -356,6 +376,13 @@ export default function TaskDetailModal({ task }) {
                     <RefreshCw size={14} className="text-stone-500 flex-shrink-0" />
                     <span className="text-stone-400">重复</span>
                     <span className="text-stone-200">{recurrenceLabel[liveTask.recurrence] || liveTask.recurrence}</span>
+                  </div>
+                )}
+                {liveTask.durationMinutes && (
+                  <div className="flex items-center gap-3 text-sm">
+                    <Timer size={14} className="text-stone-500 flex-shrink-0" />
+                    <span className="text-stone-400">时长</span>
+                    <span className="text-stone-200">{formatDurationMinutes(liveTask.durationMinutes)}</span>
                   </div>
                 )}
                 <div className="flex items-center gap-3 text-sm">
