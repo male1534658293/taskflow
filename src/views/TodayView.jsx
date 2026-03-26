@@ -177,10 +177,10 @@ export default function TodayView() {
                 }
               }}
               className="flex items-center gap-1.5 text-sm text-stone-400 hover:text-red-400 border border-stone-700 hover:border-red-500/40 px-3 py-1.5 rounded-xl transition-all"
-              title="清理今天"
+              title="把今天未完成任务迁移到明天"
             >
               <Trash2 size={14} />
-              清理今天
+              迁移到明天
             </button>
           )}
           <button

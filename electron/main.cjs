@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, screen, Menu, Tray, nativeImage, shell, Notification, dialog } = require('electron')
+const { app, BrowserWindow, globalShortcut, ipcMain, screen, shell, Notification, dialog } = require('electron')
 const path = require('path')
 const http = require('http')
 const fs = require('fs')
@@ -17,7 +17,6 @@ try {
 
 let mainWindow = null
 let floatWindow = null
-let tray = null
 let floatClickThrough = false
 const UPDATE_OWNER = 'male1534658293'
 const UPDATE_REPO = 'taskflow'
@@ -307,28 +306,8 @@ function createFloatWindow() {
   floatWindow.on('closed', () => { floatWindow = null })
 }
 
-function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'tray.png'))
-  icon.setTemplateImage(true)
-
-  tray = new Tray(icon)
-  const contextMenu = Menu.buildFromTemplate([
-    { label: '显示 TaskFlow', click: () => mainWindow ? mainWindow.show() : createMainWindow() },
-    { label: '显示浮窗 (⌘⇧T)', click: () => createFloatWindow() },
-    { type: 'separator' },
-    { label: '退出', click: () => app.quit() },
-  ])
-  tray.setToolTip('TaskFlow')
-  tray.setContextMenu(contextMenu)
-  tray.on('click', () => {
-    if (mainWindow) mainWindow.show()
-    else createMainWindow()
-  })
-}
-
 app.whenReady().then(() => {
   createMainWindow()
-  createTray()
 
   // 自动更新检查（启动 3 秒后）
   if (autoUpdater && app.isPackaged) {
@@ -646,9 +625,10 @@ ipcMain.handle('google-oauth-start', (event, params = {}) => {
         client_id: creds.clientId,
         redirect_uri: redirectUri,
         response_type: 'code',
-        scope: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.email',
+        scope: 'openid email https://www.googleapis.com/auth/calendar.events',
         access_type: 'offline',
         prompt: 'consent',
+        include_granted_scopes: 'true',
       })
 
       shell.openExternal(`https://accounts.google.com/o/oauth2/v2/auth?${params}`)

@@ -80,6 +80,22 @@ export async function requestGoogleAccess() {
   return result
 }
 
+export function normalizeGoogleCalendarError(error) {
+  const raw = String(error || '').trim()
+  const lower = raw.toLowerCase()
+
+  if (!raw) return 'Google Calendar 同步失败，请重试'
+  if (raw === 'missing_credentials') return '当前应用未配置 Google OAuth 凭据'
+  if (raw === 'token_expired') return '授权已过期，请在设置中重新连接 Google 账户'
+  if (raw === 'not_connected') return '请先在设置中连接 Google 账户'
+  if (raw === 'insufficient_scope' || lower.includes('insufficient authentication scopes') || lower.includes('insufficient permissions')) {
+    return '当前 Google 授权缺少日历写入权限，请在设置中断开后重新连接 Google 账户'
+  }
+  if (lower.includes('calendar usage limits exceeded')) return 'Google Calendar 配额已达上限，请稍后再试'
+  if (lower.includes('forbidden')) return 'Google Calendar 拒绝了这次操作，请检查账户权限后重试'
+  return raw
+}
+
 export function revokeGoogleAccess() {
   const token = localStorage.getItem('gcal_token')
   if (token) {
@@ -175,7 +191,14 @@ async function callApi(path, method, body) {
     if (res.status === 404) return { success: true }
 
     const err = await res.json().catch(() => ({}))
-    return { success: false, error: err.error?.message || `HTTP ${res.status}` }
+    const message = err.error?.message || `HTTP ${res.status}`
+    if (
+      res.status === 403 &&
+      /insufficient authentication scopes|insufficient permissions/i.test(message)
+    ) {
+      return { success: false, error: 'insufficient_scope' }
+    }
+    return { success: false, error: message }
   } catch (e) {
     return { success: false, error: e.message }
   }

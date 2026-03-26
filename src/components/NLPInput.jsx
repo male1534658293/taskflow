@@ -1,13 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { X, Zap, Calendar, Check, Loader2, ExternalLink, AlertCircle } from 'lucide-react'
 import { useApp } from '../store/AppContext.jsx'
-import { parseNLP, priorityColor, priorityDot, TASK_DURATION_OPTIONS, formatDurationMinutes } from '../utils/helpers.js'
-import { isGoogleConnected, createCalendarEvent } from '../utils/googleCalendar.js'
+import {
+  parseNLP,
+  priorityColor,
+  priorityDot,
+  TASK_DURATION_OPTIONS,
+  formatDurationMinutes,
+  getKnownTags,
+  getActiveTagToken,
+  applyTagSuggestion,
+} from '../utils/helpers.js'
+import { isGoogleConnected, createCalendarEvent, normalizeGoogleCalendarError } from '../utils/googleCalendar.js'
 
 const RECURRENCE_LABEL = { daily: '每天', weekly: '每周', weekdays: '工作日', monthly: '每月', yearly: '每年' }
 
 export default function NLPInput() {
-  const { dispatch } = useApp()
+  const { state, dispatch } = useApp()
   const [input, setInput] = useState('')
   const [parsed, setParsed] = useState(null)
   const [durationMinutes, setDurationMinutes] = useState(null)
@@ -15,8 +24,11 @@ export default function NLPInput() {
   const [calSyncState, setCalSyncState] = useState('idle') // idle | syncing | success | error
   const [calEventLink, setCalEventLink] = useState(null)
   const [calError, setCalError] = useState(null)
+  const [tagSuggestions, setTagSuggestions] = useState([])
+  const [activeTagToken, setActiveTagToken] = useState(null)
   const inputRef = useRef(null)
   const googleConnected = isGoogleConnected()
+  const knownTags = getKnownTags(state.todos)
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
@@ -28,6 +40,19 @@ export default function NLPInput() {
     }
     else setParsed(null)
   }, [input, durationMinutes])
+
+  useEffect(() => {
+    const el = inputRef.current
+    const token = getActiveTagToken(input, el?.selectionStart ?? input.length)
+    if (!token) {
+      setActiveTagToken(null)
+      setTagSuggestions([])
+      return
+    }
+    const query = token.query.toLowerCase()
+    setActiveTagToken(token)
+    setTagSuggestions(knownTags.filter(tag => !query || tag.toLowerCase().includes(query)).slice(0, 6))
+  }, [input, knownTags])
 
   async function handleCreate() {
     if (!input.trim()) return
@@ -53,12 +78,12 @@ export default function NLPInput() {
           setTimeout(() => dispatch({ type: 'TOGGLE_NLP_INPUT' }), 1800)
         } else {
           setCalSyncState('error')
-          setCalError(res.error === 'token_expired' ? '授权已过期，请在设置中重新连接' : res.error)
+          setCalError(normalizeGoogleCalendarError(res.error))
           setTimeout(() => dispatch({ type: 'TOGGLE_NLP_INPUT' }), 2500)
         }
       } catch (e) {
         setCalSyncState('error')
-        setCalError(e.message)
+        setCalError(normalizeGoogleCalendarError(e.message))
         setTimeout(() => dispatch({ type: 'TOGGLE_NLP_INPUT' }), 2000)
       }
     } else {
@@ -69,6 +94,17 @@ export default function NLPInput() {
   function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleCreate() }
     if (e.key === 'Escape') dispatch({ type: 'TOGGLE_NLP_INPUT' })
+  }
+
+  function handleApplyTag(tag) {
+    if (!activeTagToken) return
+    const nextValue = applyTagSuggestion(input, activeTagToken, tag)
+    setInput(nextValue)
+    requestAnimationFrame(() => {
+      const nextCursor = activeTagToken.start + activeTagToken.marker.length + tag.length + 1
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(nextCursor, nextCursor)
+    })
   }
 
   const isCreating = calSyncState === 'syncing'
@@ -101,6 +137,20 @@ export default function NLPInput() {
             className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3 text-stone-100 placeholder-stone-500 text-sm focus:outline-none focus:border-orange-500 transition-colors disabled:opacity-50"
           />
 
+          {tagSuggestions.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {tagSuggestions.map(tag => (
+                <button
+                  key={tag}
+                  onClick={() => handleApplyTag(tag)}
+                  className="text-xs rounded-full border border-stone-700 bg-stone-800 px-2.5 py-1 text-stone-300 hover:border-orange-500/40 hover:text-orange-300 transition-colors"
+                >
+                  {activeTagToken?.marker || '#'}{tag}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* NLP Preview */}
           {parsed && input.trim() && (
             <div className="mt-3 p-3 bg-stone-800/50 border border-stone-700 rounded-xl animate-fadeIn">
@@ -111,6 +161,7 @@ export default function NLPInput() {
                 <span className="text-stone-400">优先级</span>
                 <span className={`font-medium ${priorityColor(parsed.priority)}`}>{priorityDot(parsed.priority)} {parsed.priority}</span>
                 {parsed.tags?.length > 0 && (<><span className="text-stone-400">标签</span><span className="text-stone-300">{parsed.tags.map(t => `#${t}`).join(' ')}</span></>)}
+                {!parsed.dueDate && parsed.dueTime && (<><span className="text-stone-400">时间</span><span className="text-stone-300">⏰ 今天 {parsed.dueTime}</span></>)}
                 {parsed.dueDate && (<><span className="text-stone-400">截止</span><span className="text-stone-300">📅 {parsed.dueDate}{parsed.dueTime ? ` ⏰ ${parsed.dueTime}` : ''}</span></>)}
                 {parsed.durationMinutes && (<><span className="text-stone-400">时长</span><span className="text-stone-300">⏱ {formatDurationMinutes(parsed.durationMinutes)}</span></>)}
                 {parsed.recurrence && (<><span className="text-stone-400">重复</span><span className="text-stone-300">🔁 {RECURRENCE_LABEL[parsed.recurrence] || parsed.recurrence}</span></>)}

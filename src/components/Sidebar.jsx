@@ -1,5 +1,5 @@
 import React from 'react'
-import { Zap, Calendar, Inbox, Layout, BarChart2, Settings, Flame, Plus, CalendarDays, BarChart, Trophy, PanelTopOpen, BookOpen, Tag } from 'lucide-react'
+import { Zap, Calendar, Inbox, Layout, BarChart2, Settings, Flame, Plus, CalendarDays, BarChart, Trophy, BookOpen, Tag } from 'lucide-react'
 import { useApp } from '../store/AppContext.jsx'
 import { isToday } from '../utils/helpers.js'
 import { isDueToday } from '../utils/srs.js'
@@ -117,15 +117,10 @@ export default function Sidebar() {
           新建任务
         </button>
 
-        {/* Float window button (Electron only) */}
         {isElectron && (
-          <button
-            onClick={() => window.electronAPI.openFloatWindow()}
-            className="w-full flex items-center justify-center gap-2 bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-medium py-1.5 px-3 rounded-lg transition-colors border border-stone-700"
-          >
-            <PanelTopOpen size={13} />
-            打开浮窗 ⌘⇧T
-          </button>
+          <div className="px-2 py-1 text-center text-[11px] text-stone-600">
+            浮窗快捷键: ⌘⇧T
+          </div>
         )}
       </div>
     </aside>

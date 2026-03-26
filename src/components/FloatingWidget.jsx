@@ -4,7 +4,7 @@ import {
   Pin, PinOff, Timer, Play, Pause, RotateCcw, Edit3, Calendar
 } from 'lucide-react'
 import { useApp } from '../store/AppContext.jsx'
-import { isToday, isOverdue, parseNLP } from '../utils/helpers.js'
+import { isToday, isOverdue, parseNLP, getKnownTags, getActiveTagToken, applyTagSuggestion } from '../utils/helpers.js'
 
 // ─── Constants ────────────────────────────────────────────────
 const SIZES = {
@@ -164,7 +164,11 @@ function TaskCard({ todo, focused, onComplete, onDelete, onEdit, editing, editDa
               {todo.dueTime && !isDone && (
                 <span className={`text-xs ${isLate ? 'text-red-400' : 'text-stone-600'}`}>{todo.dueTime}</span>
               )}
-              {todo.tags?.length > 0 && <span className="text-xs text-stone-700">#{todo.tags.length}</span>}
+              {todo.tags?.length > 0 && (
+                <span className="max-w-[92px] truncate text-xs text-orange-300">
+                  {todo.tags.slice(0, 2).map(tag => `#${tag}`).join(' ')}
+                </span>
+              )}
               {todo.comments?.length > 0 && <span className="text-xs text-stone-700">💬{todo.comments.length}</span>}
             </div>
           )}
@@ -354,6 +358,10 @@ export default function FloatingWidget() {
   const [ctxMenu,   setCtxMenu]   = useState(null)
   const [focused,   setFocused]   = useState(-1)
   const [input,     setInput]     = useState('')
+  const [tagSuggestions, setTagSuggestions] = useState([])
+  const [activeTagToken, setActiveTagToken] = useState(null)
+  const quickInputRef = useRef(null)
+  const knownTags = getKnownTags(todos)
 
   // Pomodoro
   const [pomTime,      setPomTime]      = useState(POMO_WORK)
@@ -461,6 +469,17 @@ export default function FloatingWidget() {
     setInput('')
   }
 
+  function handleApplyTag(tag) {
+    if (!activeTagToken) return
+    const nextValue = applyTagSuggestion(input, activeTagToken, tag)
+    setInput(nextValue)
+    requestAnimationFrame(() => {
+      const nextCursor = activeTagToken.start + activeTagToken.marker.length + tag.length + 1
+      quickInputRef.current?.focus()
+      quickInputRef.current?.setSelectionRange(nextCursor, nextCursor)
+    })
+  }
+
   // ── Inline edit ──
   function startEdit(todo) {
     setEditingId(todo.id)
@@ -511,6 +530,19 @@ export default function FloatingWidget() {
   useEffect(() => {
     try { localStorage.setItem('taskflow-float-auto-collapse', JSON.stringify(autoCollapse)) } catch {}
   }, [autoCollapse])
+
+  useEffect(() => {
+    const el = quickInputRef.current
+    const token = getActiveTagToken(input, el?.selectionStart ?? input.length)
+    if (!token) {
+      setActiveTagToken(null)
+      setTagSuggestions([])
+      return
+    }
+    const query = token.query.toLowerCase()
+    setActiveTagToken(token)
+    setTagSuggestions(knownTags.filter(tag => !query || tag.toLowerCase().includes(query)).slice(0, 5))
+  }, [input, knownTags])
 
   useEffect(() => {
     if (!isElectron || !window.electronAPI?.onFloatClickThroughChanged) return
@@ -699,7 +731,7 @@ export default function FloatingWidget() {
                     clickThrough ? 'bg-sky-500/15 text-sky-400' : 'bg-stone-800 text-stone-400 hover:bg-stone-700'
                   }`}
                 >
-                  {clickThrough ? '已开启点击穿透' : '开启点击穿透'}
+                  {clickThrough ? '关闭点击穿透' : '开启点击穿透'}
                 </button>
                 <button
                   onClick={() => setAutoCollapse(v => !v)}
@@ -781,9 +813,17 @@ export default function FloatingWidget() {
 
           {/* ── Quick add ── */}
           <div className="flex-shrink-0 border-t border-stone-800 p-2" style={{ WebkitAppRegion: 'no-drag' }}>
+            {filter === 'today' && todos.some(t => isToday(t.dueDate) && t.status !== 'completed') && (
+              <button
+                onClick={() => dispatch({ type: 'CLEAR_TODAY' })}
+                className="mb-2 w-full rounded-lg border border-stone-700 bg-stone-900 px-2.5 py-1.5 text-xs text-stone-400 transition-colors hover:border-orange-500/40 hover:text-orange-300"
+              >
+                把今天未完成迁移到明天
+              </button>
+            )}
             <div className="flex items-center gap-1.5 bg-stone-800 rounded-lg px-2.5 py-1.5 border border-stone-700 focus-within:border-orange-500 transition-colors">
               <Plus size={11} className="text-stone-500 flex-shrink-0" />
-              <input value={input} onChange={e => setInput(e.target.value)}
+              <input ref={quickInputRef} value={input} onChange={e => setInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAdd()}
                 placeholder={isMini ? '添加...' : 'p1 下周一 #标签'}
                 className="flex-1 bg-transparent text-xs text-stone-200 placeholder-stone-700 outline-none min-w-0" />
@@ -793,6 +833,19 @@ export default function FloatingWidget() {
                 </button>
               )}
             </div>
+            {tagSuggestions.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {tagSuggestions.map(tag => (
+                  <button
+                    key={tag}
+                    onClick={() => handleApplyTag(tag)}
+                    className="rounded-full border border-stone-700 bg-stone-900 px-2 py-0.5 text-[11px] text-stone-300 hover:border-orange-500/40 hover:text-orange-300 transition-colors"
+                  >
+                    {activeTagToken?.marker || '#'}{tag}
+                  </button>
+                ))}
+              </div>
+            )}
             <button onClick={() => setShowSettings(s => !s)}
               className="mt-1 w-full text-center text-xs text-stone-800 hover:text-stone-600 transition-colors">
               ⚙ 透明度

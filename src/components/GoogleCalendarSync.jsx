@@ -6,6 +6,7 @@ import {
   isGoogleConnected,
   getGoogleEmail,
   getGoogleCredentialStatus,
+  normalizeGoogleCalendarError,
 } from '../utils/googleCalendar.js'
 
 export default function GoogleCalendarSync({ onConnectionChange }) {
@@ -55,7 +56,7 @@ export default function GoogleCalendarSync({ onConnectionChange }) {
         : result.error === 'timeout' ? '授权超时（5 分钟），请重试'
         : result.error === 'cancelled' ? '授权已取消'
         : result.error === 'missing_credentials' ? '当前应用未配置 Google OAuth 凭据，无法继续授权'
-        : result.error || '连接失败，请重试'
+        : normalizeGoogleCalendarError(result.error)
       setError(msg)
     }
   }

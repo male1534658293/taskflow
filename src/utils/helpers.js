@@ -118,6 +118,36 @@ function parseDurationToken(title) {
   return null
 }
 
+export function getKnownTags(todos = []) {
+  return [...new Set(
+    todos
+      .flatMap(todo => todo.tags || [])
+      .map(tag => String(tag || '').trim())
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+}
+
+export function getActiveTagToken(input = '', cursor = input.length) {
+  const safeCursor = Math.max(0, Math.min(cursor, input.length))
+  const beforeCursor = input.slice(0, safeCursor)
+  const match = beforeCursor.match(/(^|\s)([#@])([\u4e00-\u9fa5\w-]*)$/)
+  if (!match) return null
+  return {
+    marker: match[2],
+    query: match[3] || '',
+    start: safeCursor - match[3].length - 1,
+    end: safeCursor,
+  }
+}
+
+export function applyTagSuggestion(input = '', token, tag) {
+  if (!token || !tag) return input
+  const before = input.slice(0, token.start)
+  const after = input.slice(token.end)
+  const spacer = after.startsWith(' ') || !after ? '' : ' '
+  return `${before}${token.marker}${tag}${spacer}${after}`.trimEnd()
+}
+
 // NLP Parser
 export function parseNLP(input) {
   let title = input.trim()
@@ -375,7 +405,8 @@ export function isTomorrow(dateStr) {
 }
 
 export function formatDueDisplay(task) {
-  if (!task.dueDate) return ''
+  if (!task.dueDate && !task.dueTime) return ''
+  if (!task.dueDate && task.dueTime) return `今天 ${task.dueTime}`
   const timePart = task.dueTime ? ` ${task.dueTime}` : ''
   const durationPart = task.durationMinutes ? ` · ${formatDurationMinutes(task.durationMinutes)}` : ''
   if (isToday(task.dueDate)) return `今天${timePart}${durationPart}`
