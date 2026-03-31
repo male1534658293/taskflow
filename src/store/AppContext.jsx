@@ -13,6 +13,7 @@ const AppContext = createContext(null)
 const STORAGE_KEY = 'taskflow-todos'
 const USER_KEY = 'taskflow-user'
 const LEARNING_KEY = 'taskflow-learning'
+const NOTES_KEY = 'taskflow-notes'
 
 function loadTodos() {
   try {
@@ -50,6 +51,14 @@ function loadLearning() {
   return { cards: [], reviewStreak: 0, lastReviewDate: null, reviewHistory: {}, settings: { dailyNewCardLimit: 20 } }
 }
 
+function loadNotes() {
+  try {
+    const s = localStorage.getItem(NOTES_KEY)
+    if (s) return JSON.parse(s)
+  } catch {}
+  return []
+}
+
 const DEFAULT_USER = { name: '', email: '', karma: 0, streak: 0, longestStreak: 0 }
 
 // 初始化主题 class
@@ -72,6 +81,8 @@ const initialState = {
   // entry: { op: 'create'|'update'|'delete', todoId?, eventId? }
   gcalQueue: [],
   learning: loadLearning(),
+  notes: loadNotes(),
+  selectedTag: null, // 当前选中的标签（用于任务管理视图）
 }
 
 // ─── 工具：把 gcalQueue 条目附加到 action result ─────────────────────────────
@@ -87,6 +98,9 @@ function reducer(state, action) {
 
     case 'SET_VIEW':
       return { ...state, currentView: action.payload }
+
+    case 'SET_SELECTED_TAG':
+      return { ...state, selectedTag: action.payload }
 
     case 'TOGGLE_THEME': {
       const newTheme = state.theme === 'dark' ? 'light' : 'dark'
@@ -610,6 +624,68 @@ function reducer(state, action) {
       }
     }
 
+    case 'DELETE_TAG': {
+      const tagToDelete = action.payload
+      const newTodos = state.todos.map(t => ({
+        ...t,
+        tags: (t.tags || []).filter(tag => tag !== tagToDelete)
+      }))
+      return { 
+        ...state, 
+        todos: newTodos,
+        selectedTag: state.selectedTag === tagToDelete ? null : state.selectedTag
+      }
+    }
+
+    // ── 笔记管理 ────────────────────────────────────────────────────────────────
+    case 'ADD_NOTE': {
+      const newNote = {
+        id: Date.now().toString(),
+        title: action.payload.title || '新笔记',
+        type: action.payload.type || 'cornell', // 'cornell' | 'freeform'
+        content: action.payload.content || { cues: '', notes: '', summary: '' },
+        tags: action.payload.tags || [],
+        attachments: action.payload.attachments || [], // { id, name, type, url }
+        audioRecordings: action.payload.audioRecordings || [], // { id, name, duration, url }
+        nextReviewDate: action.payload.nextReviewDate || null,
+        reviewHistory: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+      return { ...state, notes: [newNote, ...state.notes] }
+    }
+
+    case 'UPDATE_NOTE': {
+      const newNotes = state.notes.map(n =>
+        n.id === action.payload.id ? { ...n, ...action.payload, updatedAt: new Date().toISOString() } : n
+      )
+      return { ...state, notes: newNotes }
+    }
+
+    case 'DELETE_NOTE': {
+      return { ...state, notes: state.notes.filter(n => n.id !== action.payload) }
+    }
+
+    case 'REVIEW_NOTE': {
+      const { id, rating } = action.payload
+      const today = new Date().toISOString().slice(0, 10)
+      const intervals = { 0: 1, 1: 3, 2: 7, 3: 14, 4: 30 } // 复习间隔（天）
+      const nextInterval = intervals[Math.min(rating, 4)] || 1
+      const nextDate = new Date()
+      nextDate.setDate(nextDate.getDate() + nextInterval)
+      
+      const newNotes = state.notes.map(n => {
+        if (n.id !== id) return n
+        return {
+          ...n,
+          reviewHistory: [...(n.reviewHistory || []), { date: today, rating }],
+          nextReviewDate: nextDate.toISOString().slice(0, 10),
+          updatedAt: new Date().toISOString(),
+        }
+      })
+      return { ...state, notes: newNotes }
+    }
+
     default:
       return state
   }
@@ -636,6 +712,11 @@ export function AppProvider({ children }) {
   useEffect(() => {
     try { localStorage.setItem(LEARNING_KEY, JSON.stringify(state.learning)) } catch {}
   }, [state.learning])
+
+  // 持久化笔记
+  useEffect(() => {
+    try { localStorage.setItem(NOTES_KEY, JSON.stringify(state.notes)) } catch {}
+  }, [state.notes])
 
   // iCloud 同步：数据变化后 5s 写入（防抖）
   useEffect(() => {

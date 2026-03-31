@@ -1,6 +1,6 @@
 {
   "name": "taskflow",
-  "version": "2.1.6",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -12,7 +12,10 @@
     "electron:build": "vite build && electron-builder --mac"
   },
   "dependencies": {
-    "electron-updater": "^6.8.3"
+    "electron-updater": "^6.8.3",
+    "lucide-react": "^0.378.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@electron/packager": "^19.1.0",
@@ -20,10 +23,7 @@
     "autoprefixer": "^10.4.19",
     "electron": "^41.0.2",
     "electron-builder": "^26.8.1",
-    "lucide-react": "^0.378.0",
     "postcss": "^8.4.38",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
     "tailwindcss": "^3.4.4",
     "vite": "^5.3.1"
   },

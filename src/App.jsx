@@ -11,6 +11,7 @@ import SettingsView from './views/SettingsView.jsx'
 import AchievementsView from './views/AchievementsView.jsx'
 import TagsView from './views/TagsView.jsx'
 import LearningView from './views/LearningView.jsx'
+import UnifiedView from './views/UnifiedView.jsx'
 import Onboarding from './components/Onboarding.jsx'
 import TaskDetailModal from './components/TaskDetailModal.jsx'
 import NLPInput from './components/NLPInput.jsx'
@@ -24,7 +25,7 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts.js'
 const isFloatMode = typeof window !== 'undefined' && window.location.hash === '#float'
 
 function Layout() {
-  const { state } = useApp()
+  const { state, dispatch } = useApp()
   const { currentView, modals } = state
   const [updateInfo, setUpdateInfo] = useState(null)
   const [updateStatus, setUpdateStatus] = useState(null) // null | 'downloading' | 'done'
@@ -32,6 +33,13 @@ function Layout() {
   const [updateError, setUpdateError] = useState(null)
 
   useKeyboardShortcuts()
+
+  // 确保应用打开时总是显示 unified 视图（任务管理）
+  useEffect(() => {
+    if (currentView !== 'unified') {
+      dispatch({ type: 'SET_VIEW', payload: 'unified' })
+    }
+  }, [])
 
   useEffect(() => {
     if (!window.electronAPI) return
@@ -87,6 +95,7 @@ function Layout() {
     achievements: AchievementsView,
     tags: TagsView,
     learning: LearningView,
+    unified: UnifiedView,
   }
 
   const CurrentView = views[currentView] || TodayView
